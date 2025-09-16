@@ -43,6 +43,24 @@ mv .env.example .env
 docker compose up --build
 ```
 
+## Configuration
+
+Set these in `.env` (use `.env.example` as a template):
+
+- `SLACK_BOT_TOKEN`: Bot token (starts with `xoxb-`).
+- `SLACK_APP_TOKEN`: App-level token for Socket Mode (starts with `xapp-`).
+- `OPENAI_API_KEY`: OpenAI API key.
+- `GPT_MODEL`: Responses-compatible model. Default: `gpt-4o-mini`.
+- `WEB_SEARCH_ENABLED`: Enable built-in `web_search` tool. Default: `false`.
+- `WEB_SEARCH_STRICT`: Stronger guidance to use search. Default: `false`.
+- `MAX_OUTPUT_TOKENS`: Output token cap for Responses API. Default: `3072`.
+- `HISTORY_LIMIT`: Max thread messages to include as context. Default: `20`.
+- `REASONING_EFFORT`: `low|medium|high` (model-dependent). Default: `low`.
+
+Notes:
+- If you enable `WEB_SEARCH_ENABLED=true`, ensure your chosen model supports tools in the Responses API.
+- If replies come back `status: incomplete` with `reason: max_output_tokens`, increase `MAX_OUTPUT_TOKENS` or reduce `HISTORY_LIMIT`.
+
 ## Optional: Web Search Tool
 
 - Enable web search: set `WEB_SEARCH_ENABLED=true` in `.env`.

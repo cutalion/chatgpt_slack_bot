@@ -41,9 +41,12 @@ Environment variables are required in `.env` file:
 - `SLACK_BOT_TOKEN` - Bot User OAuth Token (starts with `xoxb-`)
 - `SLACK_APP_TOKEN` - App-Level Token for Socket Mode (starts with `xapp-`)
 - `OPENAI_API_KEY` - OpenAI API key
-- `GPT_MODEL` - OpenAI model to use (default: gpt-3.5-turbo)
+- `GPT_MODEL` - OpenAI model to use (default: gpt-4o-mini). Must support the Responses API.
 - `WEB_SEARCH_ENABLED` - enable web search tool (true/false; default: false)
 - `WEB_SEARCH_STRICT` - stronger prompt guidance to use search (true/false)
+- `MAX_OUTPUT_TOKENS` - max output tokens for Responses API (default: 3072)
+- `HISTORY_LIMIT` - max thread messages to include as context (default: 20)
+- `REASONING_EFFORT` - one of low/medium/high (default: low)
 
 Use `.env.example` as template: `cp .env.example .env`
 
