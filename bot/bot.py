@@ -14,6 +14,11 @@ from slack_bolt.async_app import AsyncApp
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+# Reduce noisy third-party INFO logs
+try:
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+except Exception:
+    pass
 
 app = AsyncApp(token=config.SLACK_BOT_TOKEN) 
 client = AsyncWebClient(config.SLACK_BOT_TOKEN)
@@ -169,61 +174,23 @@ async def generate_ai_reply(messages):
     if getattr(config, "REASONING_EFFORT", None):
         args["reasoning"] = {"effort": config.REASONING_EFFORT}
 
-    # Debug: summarize request
-    try:
-        logger.info(
-            "Responses.create: model=%s, inputs=%d, tools=%s, instr_len=%s, max_out=%s",
-            model,
-            len(filtered_messages),
-            bool(getattr(config, "WEB_SEARCH_ENABLED", False)),
-            (len(instructions) if isinstance(instructions, str) else None),
-            max_output_tokens,
-        )
-        # Log full request body (excluding auth headers)
-        try:
-            logger.info("Responses.create.request args=%s", json.dumps(_jsonify(args), ensure_ascii=False))
-        except Exception as e:
-            logger.debug("Failed to serialize request args: %s", e)
-    except Exception:
-        pass
+    # Keep logs minimal; only log on errors below
     if getattr(config, "WEB_SEARCH_ENABLED", False):
         args["tools"] = [{"type": "web_search"}]
 
     try:
         resp = await aclient.responses.create(**args)
-        # Log the raw response body for full visibility
+        # If status not completed, log warning with details
         try:
-            if hasattr(resp, "to_json") and callable(getattr(resp, "to_json")):
-                raw = resp.to_json()
-            elif hasattr(resp, "model_dump_json") and callable(getattr(resp, "model_dump_json")):
-                raw = resp.model_dump_json()
-            else:
-                raw = json.dumps(_jsonify(resp), ensure_ascii=False)
-            logger.info("Responses.create.response raw=%s", raw)
-        except Exception as e:
-            logger.debug("Failed to serialize raw response: %s", e)
-        # Minimal diagnostics to help debug empty replies
-        try:
-            outs = _get(resp, 'output', []) or []
-            # Summarize content types for debugging, including tool usage
-            type_counts: Dict[str, int] = {}
-            samples: List[Dict[str, Any]] = []
-            for out in outs:
-                contents = _get(out, 'content', []) or []
-                summary = {
-                    'out_type': _get(out, 'type'),
-                    'role': _get(out, 'role'),
-                    'content_types': [],
-                }
-                for c in contents:
-                    ctype = _get(c, 'type')
-                    summary['content_types'].append(ctype)
-                    key = ctype or 'None'
-                    type_counts[key] = type_counts.get(key, 0) + 1
-                samples.append(summary)
-            logger.info("Responses output items: %d types=%s samples=%s", len(outs), type_counts, samples[:3])
-        except Exception as e:
-            logger.debug("Failed to summarize outputs: %s", e)
+            status = _get(resp, 'status')
+            if status and status != 'completed':
+                reason = _get(_get(resp, 'incomplete_details', {}), 'reason')
+                logger.warning("Responses status=%s reason=%s", status, reason)
+        except Exception:
+            pass
+
+        # Prepare outs for tool detection, but avoid verbose logs
+        outs = _get(resp, 'output', []) or []
 
         text = _extract_output_text(resp)
         if text and text.strip():
@@ -244,7 +211,6 @@ async def generate_ai_reply(messages):
             pass
 
         if has_tool_use and getattr(config, "WEB_SEARCH_ENABLED", False):
-            logger.info("No text yet after tool_use; retrying without tools (tool_choice=none)")
             retry_args = {
                 k: v for k, v in args.items() if k not in ("tools",)
             }
@@ -266,7 +232,6 @@ async def generate_ai_reply(messages):
 @app.event("app_mention")
 @app.event({"type": "message", "channel_type": "im"})
 async def handle_mention(body, logger):
-    logger.info(f"New event: {body}")
 
     event = body["event"]
     user = event["user"]
@@ -277,8 +242,6 @@ async def handle_mention(body, logger):
     raw_text = str(event.get("text", ""))
     user_message = re.sub(r"<@[^>]+>", "", raw_text).strip()
 
-    logger.info(f"User: {user}")
-    logger.info(f"User message: {user_message}")
     # Build dynamic mention instruction
     mention_instruction = ""
     if config.BOT_NAME:
@@ -337,7 +300,7 @@ async def handle_mention(body, logger):
     root_ts = event.get("thread_ts", event_ts)
 
     if "thread_ts" in event:
-        logger.info(f"Reply in thread {root_ts}:")
+        # Intentionally quiet unless errors occur
 
         conversation_history = await client.conversations_replies(channel=channel, ts=root_ts, limit=config.HISTORY_LIMIT)
         history = conversation_history.get("messages", [])
@@ -349,7 +312,6 @@ async def handle_mention(body, logger):
     messages.append({"role": "user", "content": user_message })
 
     ai_reply = await generate_ai_reply(messages)
-    logger.info(f"AI reply length: {len(ai_reply) if ai_reply else 0}")
     if not ai_reply:
         ai_reply = "Sorry, I couldn't generate a response just now. Please try again."
     try:
@@ -363,7 +325,8 @@ async def handle_mention(body, logger):
         if isinstance(data, dict):
             ok = data.get("ok")
             ts = data.get("ts") or (data.get("message") or {}).get("ts")
-        logger.info(f"Slack post ok={ok} ts={ts} raw_type={type(result).__name__}")
+        if ok is not True:
+            logger.warning(f"Slack post failed or uncertain ok={ok} ts={ts} type={type(result).__name__}")
     except Exception as e:
         logger.exception("Failed to post message to Slack: %s", e)
 
