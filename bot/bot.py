@@ -1,16 +1,12 @@
-import os
 import logging
 import config
 import asyncio
 import re
-import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 from openai import AsyncOpenAI
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
-from slack_bolt.adapter.socket_mode import SocketModeHandler
-from slack import WebClient, AsyncWebClient
-from slack_bolt import App
+from slack import AsyncWebClient
 from slack_bolt.async_app import AsyncApp
 
 logging.basicConfig(level=logging.INFO)
@@ -22,16 +18,8 @@ except Exception:
     pass
 
 app = AsyncApp(token=config.SLACK_BOT_TOKEN) 
-client = AsyncWebClient(config.SLACK_BOT_TOKEN)
+client = AsyncWebClient(token=config.SLACK_BOT_TOKEN)
 model = config.GPT_MODEL
-
-OPENAI_COMPLETION_OPTIONS = {
-    "temperature": 0.7,
-    "max_completion_tokens": config.MAX_OUTPUT_TOKENS,
-    "top_p": 1,
-    "frequency_penalty": 0,
-    "presence_penalty": 0
-}
 
 aclient = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
 
@@ -160,34 +148,6 @@ def _get(obj: Any, key: str, default=None):
     return getattr(obj, key, default)
 
 
-def _jsonify(obj: Any) -> Any:
-    """Best-effort conversion of SDK objects to JSON-serializable types for logging."""
-    # Primitive types
-    if obj is None or isinstance(obj, (bool, int, float, str)):
-        return obj
-    # Bytes: summarize
-    if isinstance(obj, (bytes, bytearray)):
-        return {"__type__": "bytes", "len": len(obj)}
-    # Lists / tuples
-    if isinstance(obj, (list, tuple)):
-        return [ _jsonify(x) for x in obj ]
-    # Dicts
-    if isinstance(obj, dict):
-        return { str(k): _jsonify(v) for k, v in obj.items() }
-    # Try common helpers on SDK models
-    for attr in ("to_dict", "model_dump", "dict"):
-        fn = getattr(obj, attr, None)
-        if callable(fn):
-            try:
-                return _jsonify(fn())
-            except Exception:
-                pass
-    # Fallback: repr
-    try:
-        return repr(obj)
-    except Exception:
-        return str(type(obj))
-
 
 def _extract_output_text(resp) -> Optional[str]:
     """Robustly extract text from a Responses API result.
@@ -241,7 +201,7 @@ async def generate_ai_reply(messages):
     - Uses web_search tool when enabled via env.
     - Does not fall back to Chat Completions (legacy).
     """
-    max_output_tokens = OPENAI_COMPLETION_OPTIONS.get("max_completion_tokens")
+    max_output_tokens = config.MAX_OUTPUT_TOKENS
     # Extract a system prompt and pass via `instructions` per Responses API best practices
     instructions = None
     filtered_messages = []

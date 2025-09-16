@@ -3,4 +3,3 @@ PyYAML>=6.0
 python-dotenv>=1.0
 slack_bolt>=1.16
 slackclient>=2.9
-asyncio>=3.4.3
