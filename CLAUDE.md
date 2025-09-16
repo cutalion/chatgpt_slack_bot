@@ -16,7 +16,8 @@ This is a Python-based Slack bot that integrates OpenAI's ChatGPT with Slack usi
 - Responds to `@bot` mentions in channels and threads
 - Handles direct messages
 - Maintains conversation context in threads (loads up to 20 previous messages)
-- Uses OpenAI ChatGPT with configurable models via `GPT_MODEL` env var
+- Uses OpenAI Responses API with configurable model via `GPT_MODEL` env var (no Chat Completions fallback)
+- Optional: Uses `web_search` tool when `WEB_SEARCH_ENABLED=true`
 
 ## Development Commands
 
@@ -41,6 +42,8 @@ Environment variables are required in `.env` file:
 - `SLACK_APP_TOKEN` - App-Level Token for Socket Mode (starts with `xapp-`)
 - `OPENAI_API_KEY` - OpenAI API key
 - `GPT_MODEL` - OpenAI model to use (default: gpt-3.5-turbo)
+- `WEB_SEARCH_ENABLED` - enable web search tool (true/false; default: false)
+- `WEB_SEARCH_STRICT` - stronger prompt guidance to use search (true/false)
 
 Use `.env.example` as template: `cp .env.example .env`
 

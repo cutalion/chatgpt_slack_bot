@@ -43,6 +43,13 @@ mv .env.example .env
 docker compose up --build
 ```
 
+## Optional: Web Search Tool
+
+- Enable web search: set `WEB_SEARCH_ENABLED=true` in `.env`.
+- The bot uses the OpenAI Responses API exclusively (no Chat Completions fallback). Choose a model that supports the Responses API, and web_search if you enable it.
+- Behavior: The bot answers normally, but when web search is needed (time-sensitive facts, requested sources, or verification), it may search and include a brief Sources list.
+- Strict mode: set `WEB_SEARCH_STRICT=true` to encourage using search more aggressively (prompt-level guidance only).
+
 ## Kudos
 1. to [@Alexandre-tKint](https://github.com/Alexandre-tKint) for [Integrate OpenAI’s ChatGPT within Slack: a step-by-step approach!](https://medium.com/@alexandre.tkint/integrate-openais-chatgpt-within-slack-a-step-by-step-approach-bea43400d311)
 2. to [@karfly](https://github.com/karfly) for [chatgpt_telegram_bot](https://github.com/karfly/chatgpt_telegram_bot)

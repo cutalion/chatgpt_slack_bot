@@ -26,6 +26,66 @@ OPENAI_COMPLETION_OPTIONS = {
 
 aclient = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
 
+
+def _to_responses_input(messages):
+    """Convert chat-completions style messages to Responses API input format."""
+    converted = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if isinstance(content, str):
+            converted.append({
+                "role": role,
+                "content": [{"type": "text", "text": content}],
+            })
+        else:
+            # Fallback: best-effort stringify
+            converted.append({
+                "role": role,
+                "content": [{"type": "text", "text": str(content)}],
+            })
+    return converted
+
+
+async def generate_ai_reply(messages):
+    """Generate a reply using the OpenAI Responses API exclusively.
+
+    - Uses web_search tool when enabled via env.
+    - Does not fall back to Chat Completions (legacy).
+    """
+    max_output_tokens = OPENAI_COMPLETION_OPTIONS.get("max_completion_tokens")
+    args = {
+        "model": model,
+        "input": _to_responses_input(messages),
+        "temperature": OPENAI_COMPLETION_OPTIONS.get("temperature"),
+        "top_p": OPENAI_COMPLETION_OPTIONS.get("top_p"),
+        "max_output_tokens": max_output_tokens,
+    }
+    if getattr(config, "WEB_SEARCH_ENABLED", False):
+        args["tools"] = [{"type": "web_search"}]
+
+    try:
+        resp = await aclient.responses.create(**args)
+        text = getattr(resp, "output_text", None)
+        if not text:
+            try:
+                pieces = []
+                for out in getattr(resp, "output", []) or []:
+                    for c in getattr(out, "content", []) or []:
+                        t = getattr(c, "text", None)
+                        if t:
+                            pieces.append(t)
+                text = "\n\n".join(pieces) if pieces else None
+            except Exception:
+                text = None
+
+        if text:
+            return text
+        return "Sorry, I couldn't generate a response just now. Please try again."
+    except Exception as e:
+        logger.exception("Responses API failed: %s", e)
+        return "Sorry, I’m having trouble reaching the model right now. Please try again in a moment."
+
 @app.event("app_mention")
 @app.event({"type": "message", "channel_type": "im"})
 async def handle_mention(body, logger):
@@ -46,6 +106,22 @@ async def handle_mention(body, logger):
         mention_instruction = f"- Users mention you with @{config.BOT_NAME} or message you directly\n"
     else:
         mention_instruction = "- Users can mention you or message you directly\n"
+
+    # Optional Tools section (only if web search is enabled)
+    tools_section = ""
+    if getattr(config, "WEB_SEARCH_ENABLED", False):
+        strict_hint = "- When in doubt, use web_search to verify claims.\n" if getattr(config, "WEB_SEARCH_STRICT", False) else ""
+        tools_section = f"""
+
+<tools>
+- You can call a tool named "web_search" to query the public web.
+- Use it for time-sensitive or unknown facts, verification, or when users ask for sources or provide URLs/domains to investigate.
+- Prefer authoritative sources; limit to 2–4 results; include dates when available.
+- After using web_search, answer first, then brief rationale, then a short "Sources:" list (title, domain, clean URL). Avoid long quotes and tracking parameters.
+- If web_search returns nothing useful or fails, say so and answer with best-known information, noting uncertainty.
+- Do not use web_search for internal Slack/process questions, general opinions, or static knowledge unlikely to have changed.
+</tools>
+{strict_hint}"""
 
     prompt = f"""You are an AI assistant integrated into this Slack workspace to help users with questions, tasks, and information.
 
@@ -70,7 +146,9 @@ async def handle_mention(body, logger):
 - For complex requests: Use clear structure with headings or bullet points
 - For technical topics: Be precise and include relevant details
 - Always aim to be immediately actionable and valuable
-</response_guidelines>"""
+</response_guidelines>
+{tools_section}
+"""
 
     messages = [
         {"role": "system", "content": prompt},
@@ -91,12 +169,7 @@ async def handle_mention(body, logger):
 
     messages.append({"role": "user", "content": user_message })
 
-    ai_response = await aclient.chat.completions.create(
-            model=model,
-            messages=messages,
-            **OPENAI_COMPLETION_OPTIONS)
-
-    ai_reply = ai_response.choices[0].message.content
+    ai_reply = await generate_ai_reply(messages)
     await client.chat_postMessage(channel=channel, thread_ts=event_ts, text=ai_reply)
 
 async def run():
