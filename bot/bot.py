@@ -18,7 +18,7 @@ model = config.GPT_MODEL
 
 OPENAI_COMPLETION_OPTIONS = {
     "temperature": 0.7,
-    "max_tokens": 1000,
+    "max_completion_tokens": 1000,
     "top_p": 1,
     "frequency_penalty": 0,
     "presence_penalty": 0
@@ -50,7 +50,7 @@ async def handle_mention(body, logger):
         thread_ts = event["thread_ts"]
         logger.info(f"Reply in thread {thread_ts}:")
 
-        conversation_history = await client.conversations_replies(channel=channel, ts=thread_ts, limit=20)
+        conversation_history = await client.conversations_replies(channel=channel, ts=thread_ts, limit=100)
         history = conversation_history["messages"]
 
         for message in history:
