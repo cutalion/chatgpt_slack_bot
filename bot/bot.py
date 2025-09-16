@@ -38,6 +38,7 @@ aclient = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
 
 # --- Lightweight author/time context helpers ---
 _USER_NAME_CACHE: Dict[str, str] = {}
+_BOT_USER_ID: Optional[str] = None
 
 
 def _format_ts_utc(ts_str: Optional[str]) -> str:
@@ -102,6 +103,25 @@ def _get_bot_name_from_message(message: Dict[str, Any]) -> str:
             return val.strip()
     # Fallback generic
     return "Bot"
+
+
+async def _get_bot_user_id() -> Optional[str]:
+    global _BOT_USER_ID
+    if _BOT_USER_ID:
+        return _BOT_USER_ID
+    try:
+        auth = await client.auth_test()
+        data = getattr(auth, "data", None)
+        if isinstance(auth, dict) and not data:
+            data = auth
+        if isinstance(data, dict):
+            uid = data.get("user_id")
+            if isinstance(uid, str) and uid.strip():
+                _BOT_USER_ID = uid
+                return _BOT_USER_ID
+    except Exception:
+        pass
+    return None
 
 
 def _to_responses_input(messages):
@@ -307,9 +327,16 @@ async def handle_mention(body, logger):
     channel = event["channel"]
     event_ts = event["event_ts"]
 
-    # Clean up Slack mention tokens like <@U12345>
+    # Clean up only our bot's leading mention token(s), preserving other mentions
     raw_text = str(event.get("text", ""))
-    user_message = re.sub(r"<@[^>]+>", "", raw_text).strip()
+    bot_uid = await _get_bot_user_id()
+    if bot_uid:
+        # Remove one or more leading mentions of the bot (e.g., "<@U123> hello")
+        pattern = rf"^\s*(<@{re.escape(bot_uid)}>[:,]?\s*)+"
+        user_message = re.sub(pattern, "", raw_text).strip()
+    else:
+        # Fallback: remove only leading generic mention tokens
+        user_message = re.sub(r"^\s*(<@[^>]+>[:,]?\s*)+", "", raw_text).strip()
 
     # Build dynamic mention instruction
     mention_instruction = ""
@@ -379,7 +406,7 @@ async def handle_mention(body, logger):
             role = "assistant" if "bot_id" in message else "user"
             # Resolve author name and timestamp
             if role == "assistant":
-                author = _get_bot_name_from_message(message)
+                author = config.BOT_NAME or _get_bot_name_from_message(message)
             else:
                 author = await _get_user_display_name(message.get("user"))
             prefix = f"{_format_ts_utc(message.get('ts'))} {author}: "

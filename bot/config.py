@@ -24,3 +24,5 @@ MAX_OUTPUT_TOKENS = _to_int(os.getenv("MAX_OUTPUT_TOKENS", "3072"), 3072)
 HISTORY_LIMIT = _to_int(os.getenv("HISTORY_LIMIT", "20"), 20)
 # Default to low to reduce internal reasoning token usage
 REASONING_EFFORT = os.getenv("REASONING_EFFORT", "low")  # one of: low, medium, high
+
+"""No ad-hoc debug flags here; keep runtime surface minimal."""
