@@ -17,7 +17,11 @@ Features > OAuth & Permissions:
 `channels:history`  
 `channels:read`  
 `chat:write`  
-`groups:history`
+`groups:history`  
+`groups:read`  
+`im:history`  
+`im:read`  
+`users:read`
 
 3.  Copy "Bot User OAuth Token" (starts with `xoxb-`)
 

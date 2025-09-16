@@ -20,7 +20,8 @@
         "groups:history",
         "im:history",
         "im:read",
-        "groups:read"
+        "groups:read",
+        "users:read"
       ]
     }
   },

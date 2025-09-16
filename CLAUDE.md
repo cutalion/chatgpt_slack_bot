@@ -61,6 +61,7 @@ The bot requires these OAuth scopes:
 - `im:history`
 - `im:read`
 - `groups:read`
+ - `users:read`
 
 Must subscribe to these bot events:
 - `app_mention`

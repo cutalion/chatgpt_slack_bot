@@ -4,6 +4,7 @@ import config
 import asyncio
 import re
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 from openai import AsyncOpenAI
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
@@ -33,6 +34,74 @@ OPENAI_COMPLETION_OPTIONS = {
 }
 
 aclient = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+
+
+# --- Lightweight author/time context helpers ---
+_USER_NAME_CACHE: Dict[str, str] = {}
+
+
+def _format_ts_utc(ts_str: Optional[str]) -> str:
+    """Format Slack ts (e.g., '1716810930.1234') to '[YYYY-MM-DD HH:MMZ]'."""
+    try:
+        ts = float(ts_str or 0)
+        dt = datetime.utcfromtimestamp(ts).replace(tzinfo=timezone.utc)
+        return dt.strftime("[%Y-%m-%d %H:%MZ]")
+    except Exception:
+        return "[0000-00-00 00:00Z]"
+
+
+def _extract_display_name_from_user(user_obj: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(user_obj, dict):
+        return None
+    profile = user_obj.get("profile") or {}
+    for key in (
+        "display_name_normalized",
+        "display_name",
+        "real_name_normalized",
+        "real_name",
+        "name",
+    ):
+        val = (profile.get(key) if key in profile else user_obj.get(key))
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    # fallback to id
+    uid = user_obj.get("id")
+    if isinstance(uid, str) and uid:
+        return uid
+    return None
+
+
+async def _get_user_display_name(user_id: Optional[str]) -> str:
+    if not user_id or not isinstance(user_id, str):
+        return "Unknown"
+    cached = _USER_NAME_CACHE.get(user_id)
+    if isinstance(cached, str):
+        return cached
+    try:
+        info = await client.users_info(user=user_id)
+        data = getattr(info, "data", None)
+        if isinstance(info, dict) and not data:
+            data = info
+        user_obj = None
+        if isinstance(data, dict):
+            user_obj = data.get("user")
+        name = _extract_display_name_from_user(user_obj or {}) or f"<@{user_id}>"
+        _USER_NAME_CACHE[user_id] = name
+        return name
+    except Exception:
+        # Fallback to Slack mention format if we cannot resolve (e.g., missing users:read scope)
+        return f"<@{user_id}>"
+
+
+def _get_bot_name_from_message(message: Dict[str, Any]) -> str:
+    # Try Slack-provided bot profile name or username
+    bot_profile = message.get("bot_profile") or {}
+    for key in ("name", "username", "app_id", "id"):
+        val = bot_profile.get(key) or message.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    # Fallback generic
+    return "Bot"
 
 
 def _to_responses_input(messages):
@@ -281,6 +350,7 @@ async def handle_mention(body, logger):
 {mention_instruction}- In threaded conversations, build naturally on the existing discussion
 - Multiple users may participate in channel discussions
 - Prioritize being helpful over being verbose
+- Historical messages in context are prefixed as: "[YYYY-MM-DD HH:MMZ] Author: " — use these prefixes to attribute statements by person and time.
 </slack_environment>
 
 <response_guidelines>
@@ -307,9 +377,22 @@ async def handle_mention(body, logger):
 
         for message in history[-config.HISTORY_LIMIT:]:
             role = "assistant" if "bot_id" in message else "user"
-            messages.append({"role": role, "content": message.get("text", "")})
+            # Resolve author name and timestamp
+            if role == "assistant":
+                author = _get_bot_name_from_message(message)
+            else:
+                author = await _get_user_display_name(message.get("user"))
+            prefix = f"{_format_ts_utc(message.get('ts'))} {author}: "
+            content_text = message.get("text", "")
+            messages.append({"role": role, "content": prefix + content_text})
 
-    messages.append({"role": "user", "content": user_message })
+    # Prefix the current event message with author/time as well
+    try:
+        current_author = await _get_user_display_name(user)
+    except Exception:
+        current_author = str(user)
+    current_prefix = f"{_format_ts_utc(event_ts)} {current_author}: "
+    messages.append({"role": "user", "content": current_prefix + user_message })
 
     ai_reply = await generate_ai_reply(messages)
     if not ai_reply:
