@@ -3,26 +3,15 @@
 Ordered by complexity and impact: refactors (no behavior change if done correctly), then behavior-changing items.
 
 ## Medium Complexity — Refactors (No Intended Behavior Change)
-1) Extract prompt construction into a dedicated function/module:
-   - Move the multi-part system prompt building into `prompt.py` (e.g., `build_system_prompt(...)`).
-   - Rationale: isolates concerns and makes unit testing easier.
-
-2) Extract Slack helpers to a utility module:
-   - Move `_get_user_display_name`, `_get_bot_user_id`, `_format_ts_utc`, `_get_bot_name_from_message` into `slack_utils.py`.
-   - Rationale: centralizes Slack-specific logic and simplifies `bot.py`.
-
-3) Extract LLM call and response parsing:
+1) Extract LLM call and response parsing:
    - Move `generate_ai_reply`, `_to_responses_input`, `_extract_output_text` into `llm.py`.
    - Rationale: clear boundaries between Slack I/O and model I/O; easier to test/migrate models.
 
-4) Add type hints and docstrings to public helpers:
-    - Rationale: improves readability and static analysis confidence.
-
-5) Parallelize user info lookups where applicable:
+2) Parallelize user info lookups where applicable:
     - When building history, gather unique user IDs and resolve with `asyncio.gather` once, then cache.
     - Rationale: performance optimization without changing behavior.
 
-6) Logging refinements:
+3) Logging refinements:
     - Keep INFO logs concise; add DEBUG logs for event summary and OpenAI timing when needed.
     - Rationale: better observability with minimal noise; behavior intact.
 
