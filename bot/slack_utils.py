@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import config
-from slack import AsyncWebClient
+from slack_sdk.web.async_client import AsyncWebClient
 
 
 logger = logging.getLogger(__name__)
