@@ -3,15 +3,11 @@
 Ordered by complexity and impact: refactors (no behavior change if done correctly), then behavior-changing items.
 
 ## Medium Complexity — Refactors (No Intended Behavior Change)
-1) Extract LLM call and response parsing:
-   - Move `generate_ai_reply`, `_to_responses_input`, `_extract_output_text` into `llm.py`.
-   - Rationale: clear boundaries between Slack I/O and model I/O; easier to test/migrate models.
-
-2) Parallelize user info lookups where applicable:
+1) Parallelize user info lookups where applicable:
     - When building history, gather unique user IDs and resolve with `asyncio.gather` once, then cache.
     - Rationale: performance optimization without changing behavior.
 
-3) Add unit tests with strict coverage targets:
+2) Add unit tests with strict coverage targets:
     - Introduce pytest-based test suite covering prompt building, Slack utilities, and LLM integration helpers.
     - Configure coverage tooling to enforce 100% statement/branch coverage to catch regressions.
 
