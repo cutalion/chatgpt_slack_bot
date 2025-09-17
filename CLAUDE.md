@@ -37,20 +37,22 @@ python bot/bot.py
 
 ## Testing
 
+Pytest is configured as the primary test runner (`pytest.ini`, `tests/`).
+
 When host dependencies are unavailable, run checks through Docker:
 
 ```bash
 # Build the image (needed after dependency changes)
 docker compose build
 
-# Lightweight sanity check
-docker compose run --rm chatgpt_slack_bot python -m compileall bot
-
-# Swap in other commands as needed, e.g. pytest or ruff
+# Run the full pytest suite
 docker compose run --rm chatgpt_slack_bot pytest
+
+# Lightweight sanity check when iterating quickly
+docker compose run --rm chatgpt_slack_bot python -m compileall bot
 ```
 
-Until a unit test suite lands, always run at least a static check (e.g. `python -m compileall bot`) or lint pass before committing changes.
+If you have Python installed locally, install requirements and run `pytest` from the repo root. Until the full unit test suite lands, continue running at least a static check (e.g. `python -m compileall bot`) before committing changes.
 
 ## Configuration
 
