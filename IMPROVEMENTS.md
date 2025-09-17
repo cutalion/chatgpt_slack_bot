@@ -60,3 +60,7 @@ Ordered by complexity and impact: refactors (no behavior change if done correctl
 12) Graceful shutdown handling:
     - Handle `CancelledError`, close clients cleanly, and log shutdown summary.
     - Impact: runtime behavior on shutdown.
+
+13) Add agentic multi-step tool orchestration:
+    - Allow the assistant to plan tool calls (Slack history pagination, web search, future utilities) before responding.
+    - Impact: significant behaviour change; requires structured tool interface, reasoning loop, and guardrails.
