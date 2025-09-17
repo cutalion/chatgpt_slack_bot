@@ -15,6 +15,10 @@ Ordered by complexity and impact: refactors (no behavior change if done correctl
     - Keep INFO logs concise; add DEBUG logs for event summary and OpenAI timing when needed.
     - Rationale: better observability with minimal noise; behavior intact.
 
+4) Add unit tests with strict coverage targets:
+    - Introduce pytest-based test suite covering prompt building, Slack utilities, and LLM integration helpers.
+    - Configure coverage tooling to enforce 100% statement/branch coverage to catch regressions.
+
 
 ## Higher Complexity — Behavior Changes (Be Careful)
 1) Filter out bot/edited/deleted events early:
