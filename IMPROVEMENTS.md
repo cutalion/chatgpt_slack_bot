@@ -11,11 +11,7 @@ Ordered by complexity and impact: refactors (no behavior change if done correctl
     - When building history, gather unique user IDs and resolve with `asyncio.gather` once, then cache.
     - Rationale: performance optimization without changing behavior.
 
-3) Logging refinements:
-    - Keep INFO logs concise; add DEBUG logs for event summary and OpenAI timing when needed.
-    - Rationale: better observability with minimal noise; behavior intact.
-
-4) Add unit tests with strict coverage targets:
+3) Add unit tests with strict coverage targets:
     - Introduce pytest-based test suite covering prompt building, Slack utilities, and LLM integration helpers.
     - Configure coverage tooling to enforce 100% statement/branch coverage to catch regressions.
 

@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import re
+from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional
 import config
 from prompt import build_system_prompt
@@ -145,8 +146,10 @@ async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
     if getattr(config, "WEB_SEARCH_ENABLED", False):
         args["tools"] = [{"type": "web_search"}]
 
+    call_started = perf_counter()
     try:
         resp = await aclient.responses.create(**args)
+        elapsed = perf_counter() - call_started
         # If status not completed, log warning with details
         try:
             status = _get(resp, 'status')
@@ -155,6 +158,15 @@ async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
                 logger.warning("Responses status=%s reason=%s", status, reason)
         except Exception:
             pass
+
+        status = _get(resp, 'status') or 'completed'
+        logger.debug(
+            "Responses API call succeeded in %.2fs (status=%s, model=%s, messages=%d)",
+            elapsed,
+            status,
+            model,
+            len(filtered_messages),
+        )
 
         # Prepare outs for tool detection, but avoid verbose logs
         outs = _get(resp, 'output', []) or []
@@ -193,6 +205,8 @@ async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
         logger.warning("No output_text extracted from response; sending fallback")
         return "Sorry, I couldn't generate a response just now. Please try again."
     except Exception as e:
+        elapsed = perf_counter() - call_started
+        logger.debug("Responses API call failed after %.2fs", elapsed)
         logger.exception("Responses API failed: %s", e)
         return "Sorry, I’m having trouble reaching the model right now. Please try again in a moment."
 
@@ -208,6 +222,14 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
 
     # Clean up only our bot's leading mention token(s), preserving other mentions
     raw_text = str(event.get("text", ""))
+    logger.debug(
+        "Slack event type=%s channel=%s thread_ts=%s user=%s text_preview=%s",
+        event.get("type"),
+        channel,
+        event.get("thread_ts"),
+        user,
+        raw_text[:120],
+    )
     bot_uid = await get_bot_user_id()
     if bot_uid:
         # Remove one or more leading mentions of the bot (e.g., "<@U123> hello")
