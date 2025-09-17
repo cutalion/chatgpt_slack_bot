@@ -98,6 +98,14 @@ async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
             continue
         filtered_messages.append(message)
 
+    message_count = len(filtered_messages)
+    logger.info(
+        "Calling OpenAI model=%s messages=%d max_output_tokens=%s",
+        model,
+        message_count,
+        max_output_tokens,
+    )
+
     args: Dict[str, Any] = {
         "model": model,
         "input": _to_responses_input(filtered_messages),
@@ -123,6 +131,12 @@ async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
             pass
 
         status = _get(resp, "status") or "completed"
+        logger.info(
+            "OpenAI call finished status=%s elapsed=%.2fs messages=%d",
+            status,
+            elapsed,
+            message_count,
+        )
         logger.debug(
             "Responses API call succeeded in %.2fs (status=%s, model=%s, messages=%d)",
             elapsed,
@@ -166,6 +180,12 @@ async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
     except Exception as exc:
         elapsed = perf_counter() - call_started
         logger.debug("Responses API call failed after %.2fs", elapsed)
+        logger.info(
+            "OpenAI call failed elapsed=%.2fs model=%s messages=%d",
+            elapsed,
+            model,
+            message_count,
+        )
         logger.exception("Responses API failed: %s", exc)
         return "Sorry, I’m having trouble reaching the model right now. Please try again in a moment."
 

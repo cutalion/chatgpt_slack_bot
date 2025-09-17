@@ -46,6 +46,14 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
         user,
         raw_text[:120],
     )
+    logger.info(
+        "Incoming Slack message channel=%s thread_ts=%s user=%s text_preview=%s",
+        channel,
+        event.get("thread_ts", ""),
+        user,
+        raw_text[:120],
+    )
+
     bot_uid = await get_bot_user_id()
     if bot_uid:
         # Remove one or more leading mentions of the bot (e.g., "<@U123> hello")
@@ -105,6 +113,8 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
             ts = data.get("ts") or (data.get("message") or {}).get("ts")
         if ok is not True:
             logger.warning(f"Slack post failed or uncertain ok={ok} ts={ts} type={type(result).__name__}")
+        else:
+            logger.info("Replied to Slack channel=%s thread_ts=%s ts=%s", channel, root_ts, ts)
     except Exception as e:
         logger.exception("Failed to post message to Slack: %s", e)
 
