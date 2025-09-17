@@ -1,9 +1,10 @@
 import logging
-import config
 import asyncio
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
+import config
+from prompt import build_system_prompt
 from openai import AsyncOpenAI
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack import AsyncWebClient
@@ -303,56 +304,7 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
         # Fallback: remove only leading generic mention tokens
         user_message = re.sub(r"^\s*(<@[^>]+>[:,]?\s*)+", "", raw_text).strip()
 
-    # Build dynamic mention instruction
-    mention_instruction = ""
-    if config.BOT_NAME:
-        mention_instruction = f"- Users mention you with @{config.BOT_NAME} or message you directly\n"
-    else:
-        mention_instruction = "- Users can mention you or message you directly\n"
-
-    # Optional Tools section (only if web search is enabled)
-    tools_section = ""
-    if getattr(config, "WEB_SEARCH_ENABLED", False):
-        strict_hint = "- When in doubt, use web_search to verify claims.\n" if getattr(config, "WEB_SEARCH_STRICT", False) else ""
-        tools_section = f"""
-
-<tools>
-- You can call a tool named "web_search" to query the public web.
-- Use it for time-sensitive or unknown facts, verification, or when users ask for sources or provide URLs/domains to investigate.
-- Prefer authoritative sources; limit to 2–4 results; include dates when available.
-- After using web_search, answer first, then brief rationale, then a short "Sources:" list (title, domain, clean URL). Avoid long quotes and tracking parameters.
-- If web_search returns nothing useful or fails, say so and answer with best-known information, noting uncertainty.
-- Do not use web_search for internal Slack/process questions, general opinions, or static knowledge unlikely to have changed.
-</tools>
-{strict_hint}"""
-
-    prompt = f"""You are an AI assistant integrated into this Slack workspace to help users with questions, tasks, and information.
-
-<core_instructions>
-- Provide clear, accurate, and helpful responses
-- Keep responses concise but complete - aim for 1-3 paragraphs unless more detail is explicitly requested
-- Maintain context in threaded conversations by referencing relevant previous messages
-- Use a professional yet friendly tone appropriate for workplace communication
-- When uncertain, clearly state your uncertainty rather than guessing
-- Avoid asking unnecessary clarification questions - work with the information provided
-</core_instructions>
-
-<slack_environment>
-- You're responding in a Slack channel or direct message
-{mention_instruction}- In threaded conversations, build naturally on the existing discussion
-- Multiple users may participate in channel discussions
-- Prioritize being helpful over being verbose
-- Historical messages in context are prefixed as: "[YYYY-MM-DD HH:MMZ] Author: " — use these prefixes to attribute statements by person and time.
-</slack_environment>
-
-<response_guidelines>
-- For simple questions: Give direct, concise answers
-- For complex requests: Use clear structure with headings or bullet points
-- For technical topics: Be precise and include relevant details
-- Always aim to be immediately actionable and valuable
-</response_guidelines>
-{tools_section}
-"""
+    prompt = build_system_prompt()
 
     messages = [
         {"role": "system", "content": prompt},
