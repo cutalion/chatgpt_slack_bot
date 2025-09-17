@@ -35,6 +35,21 @@ pip install -r requirements.txt
 python bot/bot.py
 ```
 
+## Testing
+
+When host dependencies are unavailable, run checks through Docker:
+
+```bash
+# Build the image (needed after dependency changes)
+docker compose build
+
+# Lightweight sanity check
+docker compose run --rm chatgpt_slack_bot python -m compileall bot
+
+# Swap in other commands as needed, e.g. pytest or ruff
+docker compose run --rm chatgpt_slack_bot pytest
+```
+
 ## Configuration
 
 Environment variables are required in `.env` file:
