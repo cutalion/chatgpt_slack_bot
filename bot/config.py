@@ -15,6 +15,7 @@ WEB_SEARCH_STRICT = os.getenv("WEB_SEARCH_STRICT", "false").lower() in ("1", "tr
 
 # Tuning
 def _to_int(val: str, default: int) -> int:
+    """Convert an environment value to `int`, returning `default` on failure."""
     try:
         return int(val)
     except Exception:

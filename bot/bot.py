@@ -40,6 +40,7 @@ def _format_ts_utc(ts_str: Optional[str]) -> str:
 
 
 def _extract_display_name_from_user(user_obj: Dict[str, Any]) -> Optional[str]:
+    """Return the most human-friendly display name available for a Slack user."""
     if not isinstance(user_obj, dict):
         return None
     profile = user_obj.get("profile") or {}
@@ -61,6 +62,7 @@ def _extract_display_name_from_user(user_obj: Dict[str, Any]) -> Optional[str]:
 
 
 async def _get_user_display_name(user_id: Optional[str]) -> str:
+    """Resolve a Slack user ID to a cached display name, with graceful fallbacks."""
     if not user_id or not isinstance(user_id, str):
         return "Unknown"
     cached = _USER_NAME_CACHE.get(user_id)
@@ -83,6 +85,7 @@ async def _get_user_display_name(user_id: Optional[str]) -> str:
 
 
 def _get_bot_name_from_message(message: Dict[str, Any]) -> str:
+    """Best-effort bot display name resolution for historical thread messages."""
     # Try Slack-provided bot profile name or username
     bot_profile = message.get("bot_profile") or {}
     for key in ("name", "username", "app_id", "id"):
@@ -94,6 +97,7 @@ def _get_bot_name_from_message(message: Dict[str, Any]) -> str:
 
 
 async def _get_bot_user_id() -> Optional[str]:
+    """Fetch and cache the bot's user ID via `auth_test`."""
     global _BOT_USER_ID
     if _BOT_USER_ID:
         return _BOT_USER_ID
@@ -112,8 +116,8 @@ async def _get_bot_user_id() -> Optional[str]:
     return None
 
 
-def _to_responses_input(messages):
-    """Convert chat-completions style messages to Responses API input format."""
+def _to_responses_input(messages: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert Chat Completions-style messages into Responses API payload blocks."""
     converted = []
     for m in messages:
         role = m.get("role")
@@ -139,7 +143,7 @@ def _to_responses_input(messages):
     return converted
 
 
-def _get(obj: Any, key: str, default=None):
+def _get(obj: Any, key: str, default: Any = None) -> Any:
     """Attribute-or-dict getter."""
     if obj is None:
         return default
@@ -149,7 +153,7 @@ def _get(obj: Any, key: str, default=None):
 
 
 
-def _extract_output_text(resp) -> Optional[str]:
+def _extract_output_text(resp: Any) -> Optional[str]:
     """Robustly extract text from a Responses API result.
 
     Handles SDK objects where content.text may be a structured object
@@ -195,7 +199,7 @@ def _extract_output_text(resp) -> Optional[str]:
     return joined if joined else None
 
 
-async def generate_ai_reply(messages):
+async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
     """Generate a reply using the OpenAI Responses API exclusively.
 
     - Uses web_search tool when enabled via env.
@@ -280,7 +284,8 @@ async def generate_ai_reply(messages):
 
 @app.event("app_mention")
 @app.event({"type": "message", "channel_type": "im"})
-async def handle_mention(body, logger):
+async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
+    """Handle mentions and direct messages routed through the Slack Bolt app."""
 
     event = body["event"]
     user = event["user"]
@@ -400,7 +405,8 @@ async def handle_mention(body, logger):
     except Exception as e:
         logger.exception("Failed to post message to Slack: %s", e)
 
-async def run():
+async def run() -> None:
+    """Start the Slack Socket Mode handler until cancelled."""
     handler = AsyncSocketModeHandler(app, config.SLACK_APP_TOKEN)
     await handler.start_async()
 
