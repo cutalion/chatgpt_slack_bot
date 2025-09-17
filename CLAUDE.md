@@ -50,6 +50,8 @@ docker compose run --rm chatgpt_slack_bot python -m compileall bot
 docker compose run --rm chatgpt_slack_bot pytest
 ```
 
+Until a unit test suite lands, always run at least a static check (e.g. `python -m compileall bot`) or lint pass before committing changes.
+
 ## Configuration
 
 Environment variables are required in `.env` file:
