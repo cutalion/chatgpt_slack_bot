@@ -80,12 +80,16 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
 
         for message in history[-config.HISTORY_LIMIT:]:
             role = "assistant" if "bot_id" in message else "user"
+            user_id = message.get("user") if role == "user" else None
             # Resolve author name and timestamp
             if role == "assistant":
                 author = config.BOT_NAME or get_bot_name_from_message(message)
             else:
-                author = await get_user_display_name(message.get("user"))
-            prefix = f"{format_ts_utc(message.get('ts'))} {author}: "
+                author = await get_user_display_name(user_id)
+            prefix = f"{format_ts_utc(message.get('ts'))} {author}"
+            if user_id:
+                prefix += f" (<@{user_id}>)"
+            prefix += ": "
             content_text = message.get("text", "")
             messages.append({"role": role, "content": prefix + content_text})
 
@@ -94,7 +98,10 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
         current_author = await get_user_display_name(user)
     except Exception:
         current_author = str(user)
-    current_prefix = f"{format_ts_utc(event_ts)} {current_author}: "
+    current_prefix = f"{format_ts_utc(event_ts)} {current_author}"
+    if isinstance(user, str) and user.strip():
+        current_prefix += f" (<@{user}>)"
+    current_prefix += ": "
     messages.append({"role": "user", "content": current_prefix + user_message })
 
     ai_reply = await generate_ai_reply(messages)

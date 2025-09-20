@@ -16,6 +16,7 @@ slack_client = AsyncWebClient(token=config.SLACK_BOT_TOKEN)
 
 _USER_NAME_CACHE: Dict[str, str] = {}
 _BOT_USER_ID: Optional[str] = None
+_USER_INFO_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def format_ts_utc(ts_str: Optional[str]) -> str:
@@ -72,6 +73,46 @@ async def get_user_display_name(user_id: Optional[str]) -> str:
         return name
     except Exception:
         return f"<@{user_id}>"
+
+
+async def get_user_profile(user_id: Optional[str]) -> Dict[str, Any]:
+    """Fetch a Slack user profile and return a sanitised subset of fields."""
+
+    if not user_id or not isinstance(user_id, str):
+        return {"user_id": user_id or "", "error": "invalid_user_id"}
+    cached = _USER_INFO_CACHE.get(user_id)
+    if isinstance(cached, dict):
+        return cached
+    try:
+        info = await slack_client.users_info(user=user_id)
+        data = getattr(info, "data", None)
+        if isinstance(info, dict) and not data:
+            data = info
+        user_obj = {}
+        if isinstance(data, dict):
+            user_obj = data.get("user") or {}
+    except Exception as exc:
+        logger.debug("Failed to fetch user profile for %s: %s", user_id, exc)
+        return {"user_id": user_id, "error": "lookup_failed"}
+
+    profile = user_obj.get("profile") or {}
+    result = {
+        "user_id": user_obj.get("id") or user_id,
+        "display_name": _extract_display_name_from_user(user_obj) or f"<@{user_id}>",
+        "real_name": profile.get("real_name_normalized") or user_obj.get("real_name"),
+        "title": profile.get("title"),
+        "tz": user_obj.get("tz"),
+        "tz_label": user_obj.get("tz_label"),
+        "status_text": profile.get("status_text"),
+        "status_emoji": profile.get("status_emoji"),
+        "is_bot": bool(user_obj.get("is_bot")),
+    }
+    # Prime the existing display-name cache with the resolved name
+    name = result.get("display_name")
+    if isinstance(name, str):
+        _USER_NAME_CACHE[user_id] = name
+    _USER_INFO_CACHE[user_id] = result
+    return result
 
 
 def get_bot_name_from_message(message: Dict[str, Any]) -> str:

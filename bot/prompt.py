@@ -9,6 +9,7 @@ def build_system_prompt(
     bot_name: Optional[str] = None,
     web_search_enabled: Optional[bool] = None,
     web_search_strict: Optional[bool] = None,
+    slack_tools_enabled: Optional[bool] = None,
 ) -> str:
     """Construct the base system prompt used for Slack interactions."""
 
@@ -18,28 +19,36 @@ def build_system_prompt(
         web_search_enabled = getattr(config, "WEB_SEARCH_ENABLED", False)
     if web_search_strict is None:
         web_search_strict = getattr(config, "WEB_SEARCH_STRICT", False)
+    if slack_tools_enabled is None:
+        slack_tools_enabled = getattr(config, "SLACK_TOOLS_ENABLED", False)
 
     if bot_name:
         mention_instruction = f"- Users mention you with @{bot_name} or message you directly\n"
     else:
         mention_instruction = "- Users can mention you or message you directly\n"
 
-    tools_section = ""
+    tools_section_lines = []
     if web_search_enabled:
-        strict_hint = (
-            "- When in doubt, use web_search to verify claims.\n" if web_search_strict else ""
+        web_search_block = (
+            '- You can call a tool named "web_search" to query the public web.\n'
+            '- Use it for time-sensitive or unknown facts, verification, or when users ask for sources or provide URLs/domains to investigate.\n'
+            '- Prefer authoritative sources; limit to 2–4 results; include dates when available.\n'
+            '- After using web_search, answer first, then brief rationale, then a short "Sources:" list (title, domain, clean URL). Avoid long quotes and tracking parameters.\n'
+            '- If web_search returns nothing useful or fails, say so and answer with best-known information, noting uncertainty.\n'
+            '- Do not use web_search for internal Slack/process questions, general opinions, or static knowledge unlikely to have changed.'
         )
-        tools_section = f"""
+        tools_section_lines.append(web_search_block)
+        if web_search_strict:
+            tools_section_lines.append('- When in doubt, use web_search to verify claims.')
+    if slack_tools_enabled:
+        tools_section_lines.append(
+            '- You can call a tool named "get_user_info" to look up a Slack user by ID. '
+            "Use it when you need someone's preferred display name, real name, title, time zone, or status to respond accurately."
+        )
 
-<tools>
-- You can call a tool named "web_search" to query the public web.
-- Use it for time-sensitive or unknown facts, verification, or when users ask for sources or provide URLs/domains to investigate.
-- Prefer authoritative sources; limit to 2–4 results; include dates when available.
-- After using web_search, answer first, then brief rationale, then a short "Sources:" list (title, domain, clean URL). Avoid long quotes and tracking parameters.
-- If web_search returns nothing useful or fails, say so and answer with best-known information, noting uncertainty.
-- Do not use web_search for internal Slack/process questions, general opinions, or static knowledge unlikely to have changed.
-</tools>
-{strict_hint}"""
+    tools_section = ""
+    if tools_section_lines:
+        tools_section = "\n\n<tools>\n" + "\n\n".join(tools_section_lines) + "\n</tools>\n"
 
     return f"""You are an AI assistant integrated into this Slack workspace to help users with questions, tasks, and information.
 
