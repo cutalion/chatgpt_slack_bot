@@ -103,13 +103,43 @@ async def test_execute_prefers_call_id(monkeypatch):
 def test_tool_definition_exposes_user_id_parameter():
     runner = SlackToolRunner()
     definitions = runner.tool_definitions
-    assert len(definitions) == 1
+    names = {definition["name"] for definition in definitions}
+    assert "get_user_info" in names
+    assert "read_channel_history" in names
 
-    definition = definitions[0]
-    assert definition["type"] == "function"
-    assert definition["name"] == "get_user_info"
-    params = definition["parameters"]
+    user_info_definition = next(defn for defn in definitions if defn["name"] == "get_user_info")
+    params = user_info_definition["parameters"]
 
     assert params["type"] == "object"
     assert params["required"] == ["user_id"]
     assert "user_id" in params["properties"]
+
+
+@pytest.mark.asyncio
+async def test_read_channel_history_uses_helper(monkeypatch):
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        assert channel_id == "C123"
+        assert kwargs["oldest"] == "2024-05-01"
+        assert kwargs["limit"] == 30
+        assert kwargs["max_thread_messages"] == 10
+        return {"channel_id": channel_id, "messages": [{"ts": "1", "text": "hello"}]}
+
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+
+    runner = SlackToolRunner(max_calls=1)
+    call = {
+        "id": "call_history",
+        "name": "read_channel_history",
+        "arguments": {
+            "channel_id": "C123",
+            "oldest": "2024-05-01",
+            "max_messages": 30,
+            "max_thread_messages": 10,
+        },
+    }
+
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+
+    assert payload["channel_id"] == "C123"
+    assert payload["messages"][0]["text"] == "hello"

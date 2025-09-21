@@ -7,7 +7,7 @@ import logging
 from copy import deepcopy
 from typing import Any, Dict, Iterable, List
 
-from slack_utils import get_user_profile
+from slack_utils import fetch_channel_history, get_user_profile
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,45 @@ _GET_USER_INFO_DEFINITION = {
 }
 
 
+_READ_CHANNEL_HISTORY_DEFINITION = {
+    "type": "function",
+    "name": "read_channel_history",
+    "description": (
+        "Fetch recent messages from a channel within a specified range and optionally include replies from threads. "
+        "Use this before summarising extended discussions or weekly activity."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "channel_id": {
+                "type": "string",
+                "description": "Slack channel ID (e.g. C12345678).",
+            },
+            "oldest": {
+                "type": ["string", "number"],
+                "description": "Inclusive lower bound timestamp (Unix epoch seconds or ISO-8601).",
+            },
+            "latest": {
+                "type": ["string", "number"],
+                "description": "Inclusive upper bound timestamp (Unix epoch seconds or ISO-8601).",
+            },
+            "max_messages": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Maximum number of channel messages to return (defaults to configured cap).",
+            },
+            "max_thread_messages": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Maximum replies to fetch per thread root (defaults to configured cap).",
+            },
+        },
+        "required": ["channel_id"],
+        "additionalProperties": False,
+    },
+}
+
+
 class SlackToolRunner:
     """Execute Slack-specific tool calls issued by the language model."""
 
@@ -40,11 +79,15 @@ class SlackToolRunner:
         self.max_calls = max(1, int(max_calls or 1))
         self._handlers = {
             "get_user_info": self._handle_get_user_info,
+            "read_channel_history": self._handle_read_channel_history,
         }
 
     @property
     def tool_definitions(self) -> List[Dict[str, Any]]:
-        return [deepcopy(_GET_USER_INFO_DEFINITION)]
+        return [
+            deepcopy(_GET_USER_INFO_DEFINITION),
+            deepcopy(_READ_CHANNEL_HISTORY_DEFINITION),
+        ]
 
     def can_handle(self, tool_name: str | None) -> bool:
         return bool(tool_name) and tool_name in self._handlers
@@ -80,6 +123,24 @@ class SlackToolRunner:
         profile = await get_user_profile(user_id.strip())
         # Drop keys with `None` to keep responses tidy.
         return {k: v for k, v in profile.items() if v is not None}
+
+    async def _handle_read_channel_history(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        channel_id = arguments.get("channel_id")
+        oldest = arguments.get("oldest")
+        latest = arguments.get("latest")
+        max_messages = arguments.get("max_messages")
+        max_thread_messages = arguments.get("max_thread_messages")
+
+        result = await fetch_channel_history(
+            channel_id,
+            oldest=oldest,
+            latest=latest,
+            limit=max_messages,
+            include_threads=True,
+            max_thread_messages=max_thread_messages,
+        )
+
+        return result
 
     @staticmethod
     def _parse_arguments(raw: Any) -> Dict[str, Any]:
