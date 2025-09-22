@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from copy import deepcopy
+from time import perf_counter
 from typing import Any, Dict, Iterable, List
 
 from slack_utils import fetch_channel_history, get_user_profile
@@ -102,6 +103,7 @@ class SlackToolRunner:
             raw_args = call.get("arguments") or call.get("input")
             parsed_args = self._parse_arguments(raw_args)
             logger.info("Executing Slack tool name=%s call_id=%s", name, call_id or "<missing>")
+            started = perf_counter()
             if not handler:
                 payload = {"error": f"Unsupported tool: {name}"}
             else:
@@ -110,6 +112,9 @@ class SlackToolRunner:
                 except Exception as exc:  # pragma: no cover - defence against unexpected failures
                     logger.exception("Slack tool %s failed: %s", name, exc)
                     payload = {"error": "internal_error"}
+            elapsed_ms = (perf_counter() - started) * 1000.0
+            summary = self._build_log_summary(name, call_id, parsed_args, payload, elapsed_ms)
+            logger.info("Slack tool call %s", summary)
             outputs.append({
                 "tool_call_id": call_id,
                 "output": self._serialise_payload(payload),
@@ -141,6 +146,66 @@ class SlackToolRunner:
         )
 
         return result
+
+    @staticmethod
+    def _build_log_summary(
+        tool_name: str | None,
+        call_id: str,
+        arguments: Dict[str, Any],
+        payload: Any,
+        elapsed_ms: float,
+    ) -> Dict[str, Any]:
+        summary: Dict[str, Any] = {
+            "tool": tool_name or "",
+            "call_id": call_id,
+            "status": "ok",
+            "elapsed_ms": round(elapsed_ms, 2),
+            "args": SlackToolRunner._summarise_arguments(tool_name, arguments),
+        }
+        if isinstance(payload, dict) and payload.get("error"):
+            summary["status"] = "error"
+            summary["error"] = payload.get("error")
+        result_summary = SlackToolRunner._summarise_result(tool_name, payload)
+        if result_summary:
+            summary["result"] = result_summary
+        return summary
+
+    @staticmethod
+    def _summarise_arguments(tool_name: str | None, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(arguments, dict):
+            return {}
+        if tool_name == "get_user_info":
+            user_id = arguments.get("user_id")
+            return {"user_id": user_id} if isinstance(user_id, str) else {}
+        if tool_name == "read_channel_history":
+            allowed_keys = ("channel_id", "oldest", "latest", "max_messages", "max_thread_messages")
+            return {key: arguments.get(key) for key in allowed_keys if key in arguments}
+        return {
+            key: value
+            for key, value in arguments.items()
+            if isinstance(key, str) and key[:1] != "_"
+        }
+
+    @staticmethod
+    def _summarise_result(tool_name: str | None, payload: Any) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        if tool_name == "read_channel_history":
+            messages = payload.get("messages")
+            message_count = len(messages) if isinstance(messages, list) else 0
+            truncated = bool(payload.get("truncated"))
+            requested = payload.get("requested") if isinstance(payload.get("requested"), dict) else {}
+            return {
+                "messages": message_count,
+                "truncated": truncated,
+                "thread_limit": requested.get("thread_limit"),
+            }
+        if tool_name == "get_user_info":
+            keys = ["user_id", "display_name", "error"]
+            return {key: payload.get(key) for key in keys if payload.get(key) is not None}
+        if "error" in payload:
+            return {"error": payload.get("error")}
+        return {}
 
     @staticmethod
     def _parse_arguments(raw: Any) -> Dict[str, Any]:

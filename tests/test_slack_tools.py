@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 import types
@@ -116,7 +117,7 @@ def test_tool_definition_exposes_user_id_parameter():
 
 
 @pytest.mark.asyncio
-async def test_read_channel_history_uses_helper(monkeypatch):
+async def test_read_channel_history_uses_helper(monkeypatch, caplog):
     async def fake_fetch_channel_history(channel_id, **kwargs):
         assert channel_id == "C123"
         assert kwargs["oldest"] == "2024-05-01"
@@ -127,6 +128,7 @@ async def test_read_channel_history_uses_helper(monkeypatch):
     monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
 
     runner = SlackToolRunner(max_calls=1)
+    caplog.set_level(logging.INFO)
     call = {
         "id": "call_history",
         "name": "read_channel_history",
@@ -143,3 +145,7 @@ async def test_read_channel_history_uses_helper(monkeypatch):
 
     assert payload["channel_id"] == "C123"
     assert payload["messages"][0]["text"] == "hello"
+
+    log_messages = [record.getMessage() for record in caplog.records if "Slack tool call" in record.getMessage()]
+    assert any("'tool': 'read_channel_history'" in message for message in log_messages)
+    assert any("'messages': 1" in message for message in log_messages)
