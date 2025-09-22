@@ -12,6 +12,7 @@ from slack_utils import (
     get_bot_name_from_message,
     get_bot_user_id,
     get_user_display_name,
+    normalise_user_mentions,
     slack_client,
 )
 
@@ -107,6 +108,8 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
     ai_reply = await generate_ai_reply(messages)
     if not ai_reply:
         ai_reply = "Sorry, I couldn't generate a response just now. Please try again."
+    else:
+        ai_reply = normalise_user_mentions(ai_reply)
     try:
         result = await client.chat_postMessage(channel=channel, thread_ts=root_ts, text=ai_reply)
         # Slack client often returns a SlackResponse with a .data dict

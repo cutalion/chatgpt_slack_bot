@@ -76,6 +76,7 @@ def build_system_prompt(
 - Format for Slack: keep paragraphs short with blank lines between them, lean on bullet/numbered lists for long info, and use tasteful emoji to highlight key points when it clarifies the message
 - When summarising multiple items, begin each bullet with a status emoji plus a bold label (e.g. `✅ **Blocked users** — …`), skip redundant words like “Status”, and leave a blank line between bullets or sections for easy scanning
 - Group related bullets (e.g. ✅ Closed, 🛠️ In progress, ⚠️ Needs attention) and call out owners or next steps inline when it clarifies ownership
+- Mention Slack users with `<@USERID>` so the message pings them correctly (optionally include display names in plain text for clarity)
 - Always aim to be immediately actionable and valuable
 </response_guidelines>
 {tools_section}

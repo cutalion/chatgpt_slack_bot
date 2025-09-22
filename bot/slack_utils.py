@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List, Optional
 
 import config
@@ -17,6 +18,8 @@ slack_client = AsyncWebClient(token=config.SLACK_BOT_TOKEN)
 _USER_NAME_CACHE: Dict[str, str] = {}
 _BOT_USER_ID: Optional[str] = None
 _USER_INFO_CACHE: Dict[str, Dict[str, Any]] = {}
+
+_USER_ID_MENTION_PATTERN = re.compile(r"(?<!<)@(U|W|T)[A-Z0-9]{8,}\b")
 
 
 def _normalise_ts(value: Any) -> Optional[str]:
@@ -237,6 +240,22 @@ def _simplify_message(message: Dict[str, Any], *, text_limit: int) -> Dict[str, 
         "subtype": message.get("subtype"),
     }
     return base
+
+
+def normalise_user_mentions(text: Optional[str]) -> str:
+    """Ensure raw @USERID tokens render as Slack mentions."""
+
+    if not isinstance(text, str) or "@" not in text:
+        return text or ""
+
+    def _replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        user_id = token[1:]
+        if user_id.lower() in {"here", "channel", "everyone"}:
+            return token
+        return f"<@{user_id}>"
+
+    return _USER_ID_MENTION_PATTERN.sub(_replace, text)
 
 
 async def fetch_channel_history(
