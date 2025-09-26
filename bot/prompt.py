@@ -10,6 +10,9 @@ def build_system_prompt(
     web_search_enabled: Optional[bool] = None,
     web_search_strict: Optional[bool] = None,
     slack_tools_enabled: Optional[bool] = None,
+    current_channel_descriptor: Optional[str] = None,
+    current_channel_id: Optional[str] = None,
+    current_thread_ts: Optional[str] = None,
 ) -> str:
     """Construct the base system prompt used for Slack interactions."""
 
@@ -27,6 +30,15 @@ def build_system_prompt(
     else:
         mention_instruction = "- Users can mention you or message you directly\n"
 
+    channel_context_lines = []
+    if current_channel_descriptor:
+        channel_context_lines.append(f"- Current channel: {current_channel_descriptor}")
+    if current_channel_id:
+        channel_context_lines.append(f"- Current channel ID: {current_channel_id}")
+    if current_thread_ts:
+        channel_context_lines.append(f"- Current thread root timestamp: {current_thread_ts}")
+    channel_context_line = "".join(line + "\n" for line in channel_context_lines)
+
     tools_section_lines = []
     if web_search_enabled:
         web_search_block = (
@@ -41,10 +53,12 @@ def build_system_prompt(
         if web_search_strict:
             tools_section_lines.append('- When in doubt, use web_search to verify claims.')
     if slack_tools_enabled:
-        tools_section_lines.append(
+        tools_section_lines.extend([
             '- You can call a tool named "get_user_info" to look up a Slack user by ID. '
-            "Use it when you need someone's preferred display name, real name, title, time zone, or status to respond accurately."
-        )
+            "Use it when you need someone's preferred display name, real name, title, time zone, or status to respond accurately.",
+            '- You can call a tool named "read_channel_history" to load recent messages (and thread replies) from this channel; omit channel_id to use the current channel automatically and specify time windows when helpful.',
+            '- If you do not need a fixed period, leave `oldest` and `latest` blank so the tool returns the newest activity automatically.',
+        ])
 
     tools_section = ""
     if tools_section_lines:
@@ -63,7 +77,7 @@ def build_system_prompt(
 
 <slack_environment>
 - You're responding in a Slack channel or direct message
-{mention_instruction}- In threaded conversations, build naturally on the existing discussion
+{mention_instruction}{channel_context_line}- In threaded conversations, build naturally on the existing discussion
 - Multiple users may participate in channel discussions
 - Prioritize being helpful over being verbose
 - Historical messages in context are prefixed as: "[YYYY-MM-DD HH:MMZ] Author: " — use these prefixes to attribute statements by person and time.

@@ -36,6 +36,22 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
     user = event["user"]
     channel = event["channel"]
     event_ts = event["event_ts"]
+    channel_type = event.get("channel_type")
+
+    channel_descriptor = None
+    if isinstance(channel, str):
+        descriptor = channel
+        if isinstance(channel_type, str):
+            type_map = {
+                "im": "direct message",
+                "mpim": "multi-person DM",
+                "group": "private channel",
+                "channel": "public channel",
+            }
+            human_label = type_map.get(channel_type, channel_type)
+            if human_label:
+                descriptor = f"{channel} ({human_label})"
+        channel_descriptor = descriptor
 
     # Clean up only our bot's leading mention token(s), preserving other mentions
     raw_text = str(event.get("text", ""))
@@ -64,15 +80,19 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
         # Fallback: remove only leading generic mention tokens
         user_message = re.sub(r"^\s*(<@[^>]+>[:,]?\s*)+", "", raw_text).strip()
 
-    prompt = build_system_prompt()
+    root_ts = event.get("thread_ts", event_ts)
+
+    prompt = build_system_prompt(
+        current_channel_descriptor=channel_descriptor,
+        current_channel_id=channel if isinstance(channel, str) else None,
+        current_thread_ts=root_ts if isinstance(root_ts, str) else None,
+    )
 
     messages = [
         {"role": "system", "content": prompt},
     ]
 
-    # Determine the root thread timestamp: existing thread or start a new one from the event
-    root_ts = event.get("thread_ts", event_ts)
-
+    # If this is part of a thread, load recent replies for additional context
     if "thread_ts" in event:
         # Intentionally quiet unless errors occur
 
@@ -105,7 +125,14 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
     current_prefix += ": "
     messages.append({"role": "user", "content": current_prefix + user_message })
 
-    ai_reply = await generate_ai_reply(messages)
+    slack_context = {
+        "channel_id": channel,
+        "channel_type": channel_type,
+        "channel_descriptor": channel_descriptor,
+        "root_thread_ts": root_ts,
+    }
+
+    ai_reply = await generate_ai_reply(messages, slack_context=slack_context)
     if not ai_reply:
         ai_reply = "Sorry, I couldn't generate a response just now. Please try again."
     else:

@@ -149,3 +149,92 @@ async def test_read_channel_history_uses_helper(monkeypatch, caplog):
     log_messages = [record.getMessage() for record in caplog.records if "Slack tool call" in record.getMessage()]
     assert any("'tool': 'read_channel_history'" in message for message in log_messages)
     assert any("'messages': 1" in message for message in log_messages)
+
+
+@pytest.mark.asyncio
+async def test_read_channel_history_defaults_to_runner_channel(monkeypatch):
+    recorded = {}
+
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        recorded['channel_id'] = channel_id
+        return {"channel_id": channel_id, "messages": []}
+
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+
+    runner = SlackToolRunner(max_calls=1, default_channel_id="C555")
+    call = {"id": "call_history_default", "name": "read_channel_history", "arguments": {}}
+
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+
+    assert recorded['channel_id'] == "C555"
+    assert payload["channel_id"] == "C555"
+    assert payload.get("messages") == []
+
+
+@pytest.mark.asyncio
+async def test_read_channel_history_without_channel_errors():
+    runner = SlackToolRunner(max_calls=1)
+    call = {"id": "call_history_missing", "name": "read_channel_history", "arguments": {}}
+
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+
+    assert payload["error"] == "channel_id is required"
+
+
+def test_tool_definition_includes_channel_descriptor_note():
+    runner = SlackToolRunner(channel_descriptor="C999 (public channel)")
+    definitions = runner.tool_definitions
+    history_def = next(defn for defn in definitions if defn["name"] == "read_channel_history")
+    channel_prop = history_def["parameters"]["properties"]["channel_id"]
+    assert "Current channel: C999 (public channel)." in channel_prop["description"]
+
+
+@pytest.mark.asyncio
+async def test_read_channel_history_fallbacks_to_latest_when_empty(monkeypatch):
+    calls = []
+
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("oldest"):
+            return {
+                "channel_id": channel_id,
+                "messages": [],
+                "requested": {
+                    "oldest": kwargs.get("oldest"),
+                    "latest": kwargs.get("latest"),
+                    "limit": kwargs.get("limit"),
+                    "thread_limit": kwargs.get("max_thread_messages"),
+                },
+            }
+        return {
+            "channel_id": channel_id,
+            "messages": [{"ts": "2", "text": "fallback"}],
+            "requested": {
+                "oldest": None,
+                "latest": None,
+                "limit": kwargs.get("limit"),
+                "thread_limit": kwargs.get("max_thread_messages"),
+            },
+        }
+
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+
+    runner = SlackToolRunner(max_calls=1, default_channel_id="C888")
+    call = {
+        "id": "call_history_fallback",
+        "name": "read_channel_history",
+        "arguments": {"oldest": "2020-01-01"},
+    }
+
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+
+    assert payload["fallback_applied"] is True
+    assert payload["fallback_reason"] == "no_messages_in_range"
+    assert payload["messages"][0]["text"] == "fallback"
+    assert payload["requested"]["fallback_from"]["oldest"] == "2020-01-01"
+    assert len(calls) == 2
+    assert calls[0]["oldest"] == "2020-01-01"
+    assert calls[1].get("oldest") is None

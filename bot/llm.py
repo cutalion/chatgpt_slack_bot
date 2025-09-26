@@ -213,8 +213,13 @@ async def _run_slack_tools(
 
 
 
-async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
+async def generate_ai_reply(
+    messages: Iterable[Dict[str, Any]],
+    *,
+    slack_context: Optional[Dict[str, Any]] = None,
+) -> str:
     """Generate a reply using the OpenAI Responses API exclusively."""
+    context = slack_context or {}
     max_output_tokens = config.MAX_OUTPUT_TOKENS
     instructions = None
     filtered_messages = []
@@ -247,7 +252,11 @@ async def generate_ai_reply(messages: Iterable[Dict[str, Any]]) -> str:
     if getattr(config, "WEB_SEARCH_ENABLED", False):
         tool_definitions.append({"type": "web_search"})
     if getattr(config, "SLACK_TOOLS_ENABLED", False):
-        runner = SlackToolRunner(max_calls=config.SLACK_TOOL_MAX_CALLS)
+        runner = SlackToolRunner(
+            max_calls=config.SLACK_TOOL_MAX_CALLS,
+            default_channel_id=context.get("channel_id"),
+            channel_descriptor=context.get("channel_descriptor"),
+        )
         tool_definitions.extend(runner.tool_definitions)
     if tool_definitions:
         args["tools"] = tool_definitions
