@@ -1,4 +1,5 @@
 import os
+import sys
 import dotenv
 
 dotenv.load_dotenv()
@@ -6,8 +7,32 @@ dotenv.load_dotenv()
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
-GPT_MODEL = os.getenv("GPT_MODEL")
+GPT_MODEL = os.getenv("GPT_MODEL", "gpt-5-mini")
 BOT_NAME = os.getenv("BOT_NAME")
+
+def _validate_config() -> None:
+    """Validate required configuration at startup and fail fast with clear errors."""
+    errors = []
+
+    if not SLACK_BOT_TOKEN or not SLACK_BOT_TOKEN.startswith("xoxb-"):
+        errors.append("SLACK_BOT_TOKEN is missing or invalid (should start with 'xoxb-')")
+
+    if not SLACK_APP_TOKEN or not SLACK_APP_TOKEN.startswith("xapp-"):
+        errors.append("SLACK_APP_TOKEN is missing or invalid (should start with 'xapp-')")
+
+    if not OPENAI_API_KEY or not OPENAI_API_KEY.strip():
+        errors.append("OPENAI_API_KEY is missing or empty")
+
+    if not GPT_MODEL or not GPT_MODEL.strip():
+        errors.append("GPT_MODEL is missing or empty")
+
+    if errors:
+        print("Configuration validation failed:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        sys.exit(1)
+
+_validate_config()
 
 # Feature flags / options
 WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "false").lower() in ("1", "true", "yes")
@@ -24,7 +49,7 @@ def _to_int(val: str, default: int) -> int:
 
 MAX_OUTPUT_TOKENS = _to_int(os.getenv("MAX_OUTPUT_TOKENS", "3072"), 3072)
 HISTORY_LIMIT = _to_int(os.getenv("HISTORY_LIMIT", "20"), 20)
-SLACK_TOOL_MAX_CALLS = _to_int(os.getenv("SLACK_TOOL_MAX_CALLS", "2"), 2)
+SLACK_TOOL_MAX_CALLS = _to_int(os.getenv("SLACK_TOOL_MAX_CALLS", "5"), 5)
 # Tool-specific limits
 SLACK_TOOL_HISTORY_MESSAGE_CAP = _to_int(os.getenv("SLACK_TOOL_HISTORY_MESSAGE_CAP", "200"), 200)
 SLACK_TOOL_HISTORY_PAGE_SIZE = _to_int(os.getenv("SLACK_TOOL_HISTORY_PAGE_SIZE", "100"), 100)

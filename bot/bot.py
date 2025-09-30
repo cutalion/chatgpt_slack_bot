@@ -33,7 +33,24 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
     """Handle mentions and direct messages routed through the Slack Bolt app."""
 
     event = body["event"]
-    user = event["user"]
+
+    # Filter non-actionable events early to avoid unnecessary processing
+    subtype = event.get("subtype")
+    if subtype in ("message_changed", "message_deleted", "bot_message"):
+        logger.debug("Ignoring event with subtype=%s", subtype)
+        return
+
+    # Skip events from this bot to prevent reply loops
+    bot_id = event.get("bot_id")
+    if bot_id:
+        logger.debug("Ignoring message from bot_id=%s", bot_id)
+        return
+
+    user = event.get("user")
+    if not user:
+        logger.debug("Ignoring event without user field")
+        return
+
     channel = event["channel"]
     event_ts = event["event_ts"]
     channel_type = event.get("channel_type")
@@ -100,6 +117,10 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
         history = conversation_history.get("messages", [])
 
         for message in history[-config.HISTORY_LIMIT:]:
+            # Skip the triggering message - it will be added separately below
+            if message.get("ts") == event_ts:
+                continue
+
             role = "assistant" if "bot_id" in message else "user"
             user_id = message.get("user") if role == "user" else None
             # Resolve author name and timestamp
