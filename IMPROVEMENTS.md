@@ -25,6 +25,9 @@ Grouped roughly by priority (highest first) and area of impact.
 - **Slack utility tests.** Extend unit tests around `get_user_display_name`, caching behaviour, and failure paths in `slack_utils`.
 - **Tooling regression tests.** Cover `_extract_output_text`, `_extract_tool_calls`, and `_run_slack_tools` branches for unsupported/partial tool calls.
 - **Enforce coverage targets.** Configure coverage tooling (or CI) to enforce minimum statement/branch coverage so regressions surface quickly.
+- **LLM module tests.** Add tests for `llm.py` covering tool execution logic, response parsing, and error handling paths.
+- **Bot event handler tests.** Add tests for `bot.py` main event handler covering mention handling, thread context, and error scenarios.
+- **Prompt builder tests.** Add tests for `prompt.py` covering different configuration combinations and context injection.
 
 ## Observability & Logging
 
@@ -39,9 +42,26 @@ Grouped roughly by priority (highest first) and area of impact.
 - **Start-up diagnostics.** On launch, emit checks for Slack/Web auth and OpenAI reachability to surface misconfiguration before handling events.
 - **Retry Slack 429s.** Add backoff around Slack Web API calls using `Retry-After` headers to improve resilience under bursty loads.
 
+## Code Quality & Consistency
+
+- **Standardise type hints.** Use consistent union syntax throughout (prefer `Optional[T]` over `T | None` for Python 3.9 compatibility, or upgrade to 3.10+ and use modern syntax everywhere).
+- **Extract magic strings.** Move format strings (timestamp formats, regex patterns) to module-level constants for maintainability.
+- **Specific exception handling.** Replace generic `except Exception` catches with specific exception types where possible (network errors, API errors).
+- **Precise message type hints.** Use `List[Dict[str, Any]]` instead of `Iterable[Dict[str, Any]]` for message parameters that are iterated multiple times.
+
+## Agentic Architecture (Anthropic Agent SDK Patterns)
+
+- **Implement "Verify Work" stage.** Add output validation before posting to Slack: check for malformed mentions, excessive length, and tone appropriateness. Consider self-correction loop where the model reviews its own response.
+- **Enable self-correction and error recovery.** When Slack post fails or LLM returns unsatisfactory output, feed errors back to the model for reformulation instead of posting generic error messages.
+- **Increase tool iteration limits.** Raise `SLACK_TOOL_MAX_CALLS` from 2 to support multi-step workflows (read history → identify users → get user info → synthesize). Consider making this dynamic based on task complexity.
+- **Add context compaction strategy.** Implement sliding window with summarization for long threads. Use token-based budgeting instead of raw message count to stay within model limits while preserving key context.
+- **Multi-step planning capability.** Allow the bot to plan and execute complex workflows iteratively rather than single-shot execution. Enable gather context → take action → verify loops.
+- **Relax prescriptive tool guidance.** Replace rigid tool usage instructions in prompts (e.g., "limit to 2-4 results", "do not use for...") with principles that encourage exploration and self-correction.
+- **Output validation layer.** Before posting, run lightweight checks: mention format validation, length limits, presence of required context, and alignment with user intent.
+- **Iterative refinement for complex requests.** For multi-part questions or summaries, let the bot gather context iteratively, verify completeness, then formulate the final response.
+
 ## Future Enhancements (Careful Changes)
 
 - **Chunk long Slack replies.** Split oversized model outputs into Slack-safe chunks and thread follow-ups automatically.
-- **Agentic multi-step tooling.** Allow the model to plan multiple tool calls (history pagination, web search, more Slack utilities) with guardrails.
-- **Expand Slack toolset.** Introduce additional safe Slack helpers (channel info, list members) once guardrails and audit logging are in place.
+- **Expand Slack toolset.** Introduce additional safe Slack helpers (channel info, list members, reactions) once guardrails and audit logging are in place.
 - **GitHub context integration.** Allow the bot scoped, read-only GitHub access so it can retrieve source snippets when explaining repository behaviour (e.g. GitHub App with `contents:read`, environment-stored tokens, and an allowlisted repo list).
