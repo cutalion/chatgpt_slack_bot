@@ -18,6 +18,7 @@ Grouped roughly by priority (highest first) and area of impact.
 - **Attribute assistant messages precisely.** Treat messages as assistant replies only when their `user` matches the bot user ID to avoid adopting other bots' content.
 - **Handle blank inputs.** Detect effectively empty user messages and respond with a polite clarification request instead of empty prompts to the model.
 - **Manage context by budget.** Trim history by tokens (or summarise) instead of raw message count to stay within OpenAI limits.
+- **Internationalization and language detection.** Detect conversation language from thread history and respond in the same language. For hardcoded messages (blank input responses, error messages, etc.), either infer language from user's recent messages or let the LLM generate the response instead of using English-only hardcoded strings.
 
 ## Testing & Quality Gates
 
