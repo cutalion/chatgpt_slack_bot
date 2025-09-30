@@ -61,6 +61,42 @@ Grouped roughly by priority (highest first) and area of impact.
 - **Output validation layer.** Before posting, run lightweight checks: mention format validation, length limits, presence of required context, and alignment with user intent.
 - **Iterative refinement for complex requests.** For multi-part questions or summaries, let the bot gather context iteratively, verify completeness, then formulate the final response.
 
+## Provider-Agnostic Agent Architecture
+
+**Goal:** Decouple Slack integration from LLM provider, enabling multi-provider support and vendor flexibility.
+
+**Approach:**
+1. Define standard `AgentProvider` interface with common I/O contract (messages, instructions, tools, context → response)
+2. Keep existing Slack tools as-is initially (MCP migration can come later)
+3. Implement adapters for different agent providers (OpenAI Agents SDK, Anthropic Agent SDK, direct API)
+4. Enable runtime provider selection via configuration
+
+**Benefits:**
+- Cost optimization by routing to appropriate provider based on task complexity
+- Redundancy and failover across providers
+- Best-of-breed model selection per task type (e.g., Claude for reasoning, GPT for factual)
+- Future-proof against vendor lock-in
+- A/B testing different providers in production
+
+**Prerequisites:**
+- Complete Phase 5-6 (stable context management and self-correction patterns)
+- Research OpenAI Agents SDK and Anthropic Agent SDK compatibility with current architecture
+- Design provider interface contract that works for both SDKs
+
+**Implementation Phases:**
+1. **Design `AgentProvider` protocol** - Define standard interface (messages, instructions, tools, context → response)
+2. **Wrap existing implementation** - Refactor `llm.py` as `OpenAIDirectAgent` implementing the protocol (no behavior change)
+3. **Add OpenAI Agents SDK** - Implement `OpenAISDKAgent` and compare behavior/performance/cost
+4. **Add Anthropic Agent SDK** - Implement `AnthropicAgent` sharing same tool definitions
+5. **Provider selection infrastructure** - Config-driven provider selection, fallback logic, A/B testing support
+6. **Optional: MCP migration** - Later, convert tools to MCP servers for even better provider portability
+
+**Key Design Decisions:**
+- Start with self-written tools (current Slack tools work fine)
+- MCP can be added later as an optimization, not a requirement
+- Interface must support both SDK patterns (OpenAI's multi-agent handoffs, Anthropic's verify-work loop)
+- Keep Slack integration layer (bot.py) unchanged during migration
+
 ## Future Enhancements (Careful Changes)
 
 - **Chunk long Slack replies.** Split oversized model outputs into Slack-safe chunks and thread follow-ups automatically.
