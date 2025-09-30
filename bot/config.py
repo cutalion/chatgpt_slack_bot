@@ -50,6 +50,9 @@ def _to_int(val: str, default: int) -> int:
 MAX_OUTPUT_TOKENS = _to_int(os.getenv("MAX_OUTPUT_TOKENS", "3072"), 3072)
 HISTORY_LIMIT = _to_int(os.getenv("HISTORY_LIMIT", "20"), 20)
 SLACK_TOOL_MAX_CALLS = _to_int(os.getenv("SLACK_TOOL_MAX_CALLS", "5"), 5)
+# OpenAI call timeout and retry configuration
+OPENAI_TIMEOUT_SECONDS = _to_int(os.getenv("OPENAI_TIMEOUT_SECONDS", "120"), 120)
+OPENAI_MAX_RETRIES = _to_int(os.getenv("OPENAI_MAX_RETRIES", "3"), 3)
 # Tool-specific limits
 SLACK_TOOL_HISTORY_MESSAGE_CAP = _to_int(os.getenv("SLACK_TOOL_HISTORY_MESSAGE_CAP", "200"), 200)
 SLACK_TOOL_HISTORY_PAGE_SIZE = _to_int(os.getenv("SLACK_TOOL_HISTORY_PAGE_SIZE", "100"), 100)

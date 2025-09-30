@@ -97,6 +97,19 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
         # Fallback: remove only leading generic mention tokens
         user_message = re.sub(r"^\s*(<@[^>]+>[:,]?\s*)+", "", raw_text).strip()
 
+    # Handle blank inputs - respond with clarification request
+    if not user_message or not user_message.strip():
+        logger.info("Received empty message from user=%s, requesting clarification", user)
+        try:
+            await client.chat_postMessage(
+                channel=channel,
+                thread_ts=event.get("thread_ts", event_ts),
+                text="I received your message, but it appears to be empty. Could you please let me know how I can help you?"
+            )
+        except Exception as e:
+            logger.exception("Failed to post clarification request: %s", e)
+        return
+
     root_ts = event.get("thread_ts", event_ts)
 
     prompt = build_system_prompt(

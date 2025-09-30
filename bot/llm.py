@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import config
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
 from slack_tools import SlackToolRunner
 
 
@@ -263,79 +264,140 @@ async def generate_ai_reply(
 
     call_started = perf_counter()
     logger.debug('OpenAI request payload: %s', {k: v for k, v in args.items() if k != 'input'})
-    try:
-        resp = await aclient.responses.create(**args)
-        logger.debug('OpenAI response object: %s', type(resp))
-        tools_handled = False
-        pending_unhandled: List[str] = []
-        if runner:
-            resp, tools_handled, pending_unhandled = await _run_slack_tools(
-                resp,
-                runner,
-                instructions=instructions,
-                max_output_tokens=max_output_tokens,
-                tool_definitions=tool_definitions,
+
+    # Retry loop with exponential backoff for transient failures
+    max_retries = config.OPENAI_MAX_RETRIES
+    timeout_seconds = config.OPENAI_TIMEOUT_SECONDS
+
+    for attempt in range(max_retries):
+        try:
+            resp = await asyncio.wait_for(
+                aclient.responses.create(**args),
+                timeout=timeout_seconds
             )
 
-        elapsed = perf_counter() - call_started
-        logger.debug('OpenAI raw response: %s', getattr(resp, 'model_dump', lambda: resp)())
-        status = _get(resp, "status") or "completed"
-        if status and status != "completed":
-            reason = _get(_get(resp, "incomplete_details", {}), "reason")
-            logger.warning("Responses status=%s reason=%s", status, reason)
-        logger.info(
-            "OpenAI call finished status=%s elapsed=%.2fs messages=%d tools_handled=%s",
-            status,
-            elapsed,
-            message_count,
-            tools_handled,
-        )
-        logger.debug(
-            "Responses API call succeeded in %.2fs (status=%s, model=%s, messages=%d)",
-            elapsed,
-            status,
-            model,
-            len(filtered_messages),
-        )
+            logger.debug('OpenAI response object: %s', type(resp))
+            tools_handled = False
+            pending_unhandled: List[str] = []
+            if runner:
+                resp, tools_handled, pending_unhandled = await _run_slack_tools(
+                    resp,
+                    runner,
+                    instructions=instructions,
+                    max_output_tokens=max_output_tokens,
+                    tool_definitions=tool_definitions,
+                )
 
-        text = _extract_output_text(resp)
-        if text and text.strip():
-            logger.debug("Extracted output_text (len=%d)", len(text.strip()))
-            return text.strip()
+            elapsed = perf_counter() - call_started
+            logger.debug('OpenAI raw response: %s', getattr(resp, 'model_dump', lambda: resp)())
+            status = _get(resp, "status") or "completed"
+            if status and status != "completed":
+                reason = _get(_get(resp, "incomplete_details", {}), "reason")
+                logger.warning("Responses status=%s reason=%s", status, reason)
+            logger.info(
+                "OpenAI call finished status=%s elapsed=%.2fs messages=%d tools_handled=%s",
+                status,
+                elapsed,
+                message_count,
+                tools_handled,
+            )
+            logger.debug(
+                "Responses API call succeeded in %.2fs (status=%s, model=%s, messages=%d)",
+                elapsed,
+                status,
+                model,
+                len(filtered_messages),
+            )
 
-        if status != "completed":
-            if pending_unhandled:
-                logger.warning("OpenAI response still requires unsupported tools: %s", pending_unhandled)
-            retry_args = {k: v for k, v in args.items() if k not in ("tools", "tool_choice")}
-            retry_args["tool_choice"] = "none"
-            if instructions:
-                retry_args["instructions"] = instructions + "\n\nTools are unavailable; answer directly without calling tools."
-            resp2 = await aclient.responses.create(**retry_args)
-            text2 = _extract_output_text(resp2)
-            if text2 and text2.strip():
-                return text2.strip()
+            text = _extract_output_text(resp)
+            if text and text.strip():
+                logger.debug("Extracted output_text (len=%d)", len(text.strip()))
+                return text.strip()
 
-        debug_payload = None
-        try:
-            if hasattr(resp, 'model_dump'):
-                debug_payload = resp.model_dump()
-            elif isinstance(resp, dict):
-                debug_payload = resp
-        except Exception as dump_exc:
-            logger.debug('Failed to dump response payload: %s', dump_exc)
-        logger.error('No output text; raw response payload=%s', debug_payload)
-        return "Sorry, I couldn't generate a response just now. Please try again."
-    except Exception as exc:
-        elapsed = perf_counter() - call_started
-        logger.debug("Responses API call failed after %.2fs", elapsed)
-        logger.info(
-            "OpenAI call failed elapsed=%.2fs model=%s messages=%d",
-            elapsed,
-            model,
-            message_count,
-        )
-        logger.exception("Responses API failed: %s", exc)
-        return "Sorry, I’m having trouble reaching the model right now. Please try again in a moment."
+            if status != "completed":
+                if pending_unhandled:
+                    logger.warning("OpenAI response still requires unsupported tools: %s", pending_unhandled)
+                retry_args = {k: v for k, v in args.items() if k not in ("tools", "tool_choice")}
+                retry_args["tool_choice"] = "none"
+                if instructions:
+                    retry_args["instructions"] = instructions + "\n\nTools are unavailable; answer directly without calling tools."
+                resp2 = await aclient.responses.create(**retry_args)
+                text2 = _extract_output_text(resp2)
+                if text2 and text2.strip():
+                    return text2.strip()
+
+            debug_payload = None
+            try:
+                if hasattr(resp, 'model_dump'):
+                    debug_payload = resp.model_dump()
+                elif isinstance(resp, dict):
+                    debug_payload = resp
+            except Exception as dump_exc:
+                logger.debug('Failed to dump response payload: %s', dump_exc)
+            logger.error('No output text; raw response payload=%s', debug_payload)
+            return "Sorry, I couldn't generate a response just now. Please try again."
+
+        except asyncio.TimeoutError:
+            elapsed = perf_counter() - call_started
+            if attempt < max_retries - 1:
+                backoff = 2 ** attempt
+                logger.warning(
+                    "OpenAI call timed out after %.2fs (attempt %d/%d), retrying in %ds",
+                    elapsed,
+                    attempt + 1,
+                    max_retries,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                continue
+            else:
+                logger.error(
+                    "OpenAI call timed out after %.2fs (attempt %d/%d), giving up",
+                    elapsed,
+                    attempt + 1,
+                    max_retries,
+                )
+                return "Sorry, the request timed out. Please try again."
+
+        except (APITimeoutError, RateLimitError) as exc:
+            elapsed = perf_counter() - call_started
+            if attempt < max_retries - 1:
+                backoff = 2 ** attempt
+                logger.warning(
+                    "OpenAI transient error %s after %.2fs (attempt %d/%d), retrying in %ds",
+                    type(exc).__name__,
+                    elapsed,
+                    attempt + 1,
+                    max_retries,
+                    backoff,
+                )
+                await asyncio.sleep(backoff)
+                continue
+            else:
+                logger.error(
+                    "OpenAI transient error %s after %.2fs (attempt %d/%d), giving up: %s",
+                    type(exc).__name__,
+                    elapsed,
+                    attempt + 1,
+                    max_retries,
+                    exc,
+                )
+                return "Sorry, I'm having trouble reaching the model right now. Please try again in a moment."
+
+        except Exception as exc:
+            elapsed = perf_counter() - call_started
+            logger.debug("Responses API call failed after %.2fs", elapsed)
+            logger.info(
+                "OpenAI call failed elapsed=%.2fs model=%s messages=%d",
+                elapsed,
+                model,
+                message_count,
+            )
+            logger.exception("Responses API failed: %s", exc)
+            return "Sorry, I'm having trouble reaching the model right now. Please try again in a moment."
+
+    # Should never reach here, but just in case
+    return "Sorry, I couldn't complete the request after multiple attempts. Please try again."
 
 
 __all__ = ["generate_ai_reply"]
