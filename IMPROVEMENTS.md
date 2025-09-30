@@ -44,4 +44,4 @@ Grouped roughly by priority (highest first) and area of impact.
 - **Chunk long Slack replies.** Split oversized model outputs into Slack-safe chunks and thread follow-ups automatically.
 - **Agentic multi-step tooling.** Allow the model to plan multiple tool calls (history pagination, web search, more Slack utilities) with guardrails.
 - **Expand Slack toolset.** Introduce additional safe Slack helpers (channel info, list members) once guardrails and audit logging are in place.
-
+- **GitHub context integration.** Allow the bot scoped, read-only GitHub access so it can retrieve source snippets when explaining repository behaviour (e.g. GitHub App with `contents:read`, environment-stored tokens, and an allowlisted repo list).
