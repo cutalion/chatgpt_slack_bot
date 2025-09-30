@@ -6,12 +6,12 @@ os.environ.setdefault("SLACK_BOT_TOKEN", "xoxb-test")
 os.environ.setdefault("SLACK_APP_TOKEN", "xapp-test")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-def _load_module():
-    from bot import llm  # noqa: WPS433
-    return llm
+def _load_agent():
+    from bot.llm_openai_direct import OpenAIDirectAgent  # noqa: WPS433
+    return OpenAIDirectAgent()
 
 def test_extract_tool_calls_from_output_function_call():
-    llm = _load_module()
+    agent = _load_agent()
     resp = {
         "output": [
             {
@@ -24,7 +24,7 @@ def test_extract_tool_calls_from_output_function_call():
         ]
     }
 
-    calls = llm._extract_tool_calls(resp)
+    calls = agent._extract_tool_calls(resp)
 
     assert len(calls) == 1
     assert calls[0]["name"] == "get_user_info"
@@ -33,7 +33,7 @@ def test_extract_tool_calls_from_output_function_call():
     assert calls[0]["call_id"] == 'call_123'
 
 def test_extract_tool_calls_from_required_action_function_block():
-    llm = _load_module()
+    agent = _load_agent()
     resp = SimpleNamespace(
         required_action={
             "submit_tool_outputs": {
@@ -51,7 +51,7 @@ def test_extract_tool_calls_from_required_action_function_block():
         }
     )
 
-    calls = llm._extract_tool_calls(resp)
+    calls = agent._extract_tool_calls(resp)
 
     assert len(calls) == 1
     assert calls[0]["name"] == "get_user_info"
@@ -63,7 +63,7 @@ def test_extract_tool_calls_from_required_action_function_block():
 
 @pytest.mark.asyncio
 async def test_run_slack_tools_submits_function_outputs(monkeypatch):
-    llm = _load_module()
+    agent = _load_agent()
 
     class StubRunner:
         max_calls = 1
@@ -87,7 +87,7 @@ async def test_run_slack_tools_submits_function_outputs(monkeypatch):
         captured.update(kwargs)
         return SimpleNamespace(id="resp_next", output=[])
 
-    monkeypatch.setattr(llm.aclient.responses, "create", fake_create)
+    monkeypatch.setattr(agent.aclient.responses, "create", fake_create)
 
     resp = SimpleNamespace(
         id="resp_initial",
@@ -102,7 +102,7 @@ async def test_run_slack_tools_submits_function_outputs(monkeypatch):
     )
 
     runner = StubRunner()
-    _, handled, pending = await llm._run_slack_tools(
+    _, handled, pending = await agent._run_slack_tools(
         resp,
         runner,
         instructions="sys",
