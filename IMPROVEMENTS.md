@@ -10,6 +10,7 @@ Grouped roughly by priority (highest first) and area of impact.
 - **Batch user lookups.** Reuse author data embedded in history payloads, cache aggressively, and parallelise any remaining `users_info` requests. Cuts latency and rate-limit risk when threads are long.
 - **Fail fast on bad configuration.** Validate `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `OPENAI_API_KEY`, and `GPT_MODEL` during startup with explicit errors and safe defaults (e.g. default model `gpt-4o-mini`).
 - **Timeout and retry OpenAI calls.** Wrap `aclient.responses.create` with `asyncio.wait_for` and add retry/backoff on transient network failures.
+- **Private channel access control.** Verify that users requesting information from private channels are members of those channels. Currently, if the bot is added to a private channel, any user can ask it questions about that channel's content, exposing private information to unauthorized users. Add channel membership validation before allowing tool calls to access private channel data.
 
 ## Prompt & Event Handling
 
@@ -18,6 +19,7 @@ Grouped roughly by priority (highest first) and area of impact.
 - **Attribute assistant messages precisely.** Treat messages as assistant replies only when their `user` matches the bot user ID to avoid adopting other bots' content.
 - **Handle blank inputs.** Detect effectively empty user messages and respond with a polite clarification request instead of empty prompts to the model.
 - **Manage context by budget.** Trim history by tokens (or summarise) instead of raw message count to stay within OpenAI limits.
+- **Smart handling of large context requests.** When users request summaries over long periods (e.g., yearly channel summaries), the bot can exceed the LLM's context window. Instead of limiting results, implement intelligent chunking strategies: warn the user about the approach, break requests into smaller time periods (e.g., monthly for yearly summaries), summarize each chunk, post intermediate results to the thread, then synthesize a final summary from the thread. Consider adding persistent storage/memory to support multi-stage processing of large contexts.
 - **Internationalization and language detection.** Detect conversation language from thread history and respond in the same language. For hardcoded messages (blank input responses, error messages, etc.), either infer language from user's recent messages or let the LLM generate the response instead of using English-only hardcoded strings.
 
 ## Testing & Quality Gates
