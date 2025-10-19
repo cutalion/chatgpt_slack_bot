@@ -56,7 +56,7 @@ def format_ts_utc(ts_str: Optional[str]) -> str:
 
     try:
         ts = float(ts_str or 0)
-        dt = datetime.utcfromtimestamp(ts).replace(tzinfo=timezone.utc)
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         return dt.strftime("[%Y-%m-%d %H:%MZ]")
     except Exception:
         return "[0000-00-00 00:00Z]"

@@ -238,3 +238,251 @@ async def test_read_channel_history_fallbacks_to_latest_when_empty(monkeypatch):
     assert len(calls) == 2
     assert calls[0]["oldest"] == "2020-01-01"
     assert calls[1].get("oldest") is None
+
+
+def test_can_handle_with_none():
+    """Test can_handle returns False for None tool_name."""
+    runner = SlackToolRunner()
+    assert runner.can_handle(None) is False
+
+
+def test_can_handle_with_empty_string():
+    """Test can_handle returns False for empty string tool_name."""
+    runner = SlackToolRunner()
+    assert runner.can_handle("") is False
+
+
+def test_can_handle_with_unknown_tool():
+    """Test can_handle returns False for unknown tool name."""
+    runner = SlackToolRunner()
+    assert runner.can_handle("unknown_tool") is False
+
+
+def test_can_handle_with_valid_tool():
+    """Test can_handle returns True for valid tool names."""
+    runner = SlackToolRunner()
+    assert runner.can_handle("get_user_info") is True
+    assert runner.can_handle("read_channel_history") is True
+
+
+@pytest.mark.asyncio
+async def test_get_user_info_missing_user_id():
+    """Test _handle_get_user_info returns error when user_id is missing."""
+    runner = SlackToolRunner()
+    result = await runner._handle_get_user_info({})
+    assert result["error"] == "user_id is required"
+
+
+@pytest.mark.asyncio
+async def test_get_user_info_empty_user_id():
+    """Test _handle_get_user_info returns error when user_id is empty string."""
+    runner = SlackToolRunner()
+    result = await runner._handle_get_user_info({"user_id": ""})
+    assert result["error"] == "user_id is required"
+
+
+@pytest.mark.asyncio
+async def test_get_user_info_whitespace_user_id():
+    """Test _handle_get_user_info returns error when user_id is only whitespace."""
+    runner = SlackToolRunner()
+    result = await runner._handle_get_user_info({"user_id": "   "})
+    assert result["error"] == "user_id is required"
+
+
+@pytest.mark.asyncio
+async def test_get_user_info_non_string_user_id():
+    """Test _handle_get_user_info returns error when user_id is not a string."""
+    runner = SlackToolRunner()
+    result = await runner._handle_get_user_info({"user_id": 123})
+    assert result["error"] == "user_id is required"
+
+
+@pytest.mark.asyncio
+async def test_read_channel_history_fallback_missing_requested(monkeypatch):
+    """Test fallback when result['requested'] is missing."""
+    calls = []
+
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("oldest"):
+            return {
+                "channel_id": channel_id,
+                "messages": [],
+                # Missing "requested" key
+            }
+        return {
+            "channel_id": channel_id,
+            "messages": [{"ts": "2", "text": "fallback"}],
+            "requested": {
+                "oldest": None,
+                "latest": None,
+                "limit": kwargs.get("limit"),
+                "thread_limit": kwargs.get("max_thread_messages"),
+            },
+        }
+
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+
+    runner = SlackToolRunner(max_calls=1, default_channel_id="C888")
+    call = {
+        "id": "call_fallback_missing",
+        "name": "read_channel_history",
+        "arguments": {"oldest": "2020-01-01"},
+    }
+
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+
+    assert payload["fallback_applied"] is True
+    assert payload["fallback_reason"] == "no_messages_in_range"
+    assert payload["requested"]["fallback_from"]["oldest"] == "2020-01-01"
+
+
+@pytest.mark.asyncio
+async def test_read_channel_history_fallback_non_dict_requested(monkeypatch):
+    """Test fallback when result['requested'] is not a dict."""
+    calls = []
+
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("oldest"):
+            return {
+                "channel_id": channel_id,
+                "messages": [],
+                "requested": "not_a_dict",  # Not a dict
+            }
+        return {
+            "channel_id": channel_id,
+            "messages": [{"ts": "2", "text": "fallback"}],
+            "requested": {
+                "oldest": None,
+                "latest": None,
+                "limit": kwargs.get("limit"),
+                "thread_limit": kwargs.get("max_thread_messages"),
+            },
+        }
+
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+
+    runner = SlackToolRunner(max_calls=1, default_channel_id="C888")
+    call = {
+        "id": "call_fallback_non_dict",
+        "name": "read_channel_history",
+        "arguments": {"oldest": "2020-01-01"},
+    }
+
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+
+    assert payload["fallback_applied"] is True
+    assert payload["fallback_reason"] == "no_messages_in_range"
+    assert payload["requested"]["fallback_from"]["oldest"] == "2020-01-01"
+
+
+@pytest.mark.asyncio
+async def test_read_channel_history_fallback_non_dict_fallback_requested(monkeypatch):
+    """Test fallback when fallback_result['requested'] is not a dict."""
+    calls = []
+
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("oldest"):
+            return {
+                "channel_id": channel_id,
+                "messages": [],
+                "requested": {
+                    "oldest": kwargs.get("oldest"),
+                    "latest": kwargs.get("latest"),
+                    "limit": kwargs.get("limit"),
+                    "thread_limit": kwargs.get("max_thread_messages"),
+                },
+            }
+        return {
+            "channel_id": channel_id,
+            "messages": [{"ts": "2", "text": "fallback"}],
+            "requested": "not_a_dict",  # Not a dict
+        }
+
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+
+    runner = SlackToolRunner(max_calls=1, default_channel_id="C888")
+    call = {
+        "id": "call_fallback_non_dict_fallback",
+        "name": "read_channel_history",
+        "arguments": {"oldest": "2020-01-01"},
+    }
+
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+
+    assert payload["fallback_applied"] is True
+    assert payload["fallback_reason"] == "no_messages_in_range"
+    assert payload["requested"]["fallback_from"]["oldest"] == "2020-01-01"
+
+
+def test_summarise_arguments_with_non_dict():
+    """Test _summarise_arguments with non-dict arguments."""
+    result = SlackToolRunner._summarise_arguments("get_user_info", "not_a_dict")
+    assert result == {}
+
+
+def test_summarise_arguments_with_unknown_tool():
+    """Test _summarise_arguments with unknown tool name."""
+    args = {"user_id": "U123", "_private": "hidden", "public": "visible"}
+    result = SlackToolRunner._summarise_arguments("unknown_tool", args)
+    # Should filter out keys starting with "_" but include others
+    assert result == {"user_id": "U123", "public": "visible"}
+
+
+def test_summarise_result_with_non_dict_payload():
+    """Test _summarise_result with non-dict payload."""
+    result = SlackToolRunner._summarise_result("get_user_info", "not_a_dict")
+    assert result == {}
+
+
+def test_summarise_result_with_unknown_tool():
+    """Test _summarise_result with unknown tool name and dict payload without error."""
+    payload = {"some_key": "some_value"}
+    result = SlackToolRunner._summarise_result("unknown_tool", payload)
+    assert result == {}
+
+
+def test_summarise_result_with_unknown_tool_and_error():
+    """Test _summarise_result with unknown tool name and dict payload with error."""
+    payload = {"error": "some_error", "other": "data"}
+    result = SlackToolRunner._summarise_result("unknown_tool", payload)
+    assert result == {"error": "some_error"}
+
+
+def test_parse_arguments_with_invalid_json():
+    """Test _parse_arguments with invalid JSON string."""
+    result = SlackToolRunner._parse_arguments('{"invalid": json}')
+    assert result == {}
+
+
+def test_parse_arguments_with_empty_string():
+    """Test _parse_arguments with empty string."""
+    result = SlackToolRunner._parse_arguments("")
+    assert result == {}
+
+
+def test_parse_arguments_with_whitespace_string():
+    """Test _parse_arguments with whitespace-only string."""
+    result = SlackToolRunner._parse_arguments("   ")
+    assert result == {}
+
+
+def test_serialise_payload_with_string():
+    """Test _serialise_payload with string payload."""
+    result = SlackToolRunner._serialise_payload("already_a_string")
+    assert result == "already_a_string"
+
+
+def test_serialise_payload_with_non_serializable():
+    """Test _serialise_payload with non-serializable payload."""
+    class NonSerializable:
+        def __init__(self):
+            self.circular = self  # Create circular reference
+    
+    result = SlackToolRunner._serialise_payload(NonSerializable())
+    assert result == '{"error": "non_serialisable_payload"}'
