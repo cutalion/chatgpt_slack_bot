@@ -1,12 +1,14 @@
 import logging
 import asyncio
 import re
-from typing import Any, Dict
+from typing import Any, Dict, cast
 import config
 from prompt import build_system_prompt
 from llm import generate_ai_reply
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
+from slack_sdk.web.async_client import AsyncWebClient
+from slack_types import SlackEventBody, SlackEvent
 from slack_utils import (
     format_ts_utc,
     get_bot_name_from_message,
@@ -14,7 +16,10 @@ from slack_utils import (
     get_user_display_name,
     normalise_user_mentions,
     slack_client,
+    is_supported_event,
+    clean_user_message,
 )
+from slack_utils import get_channel_descriptor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,95 +32,62 @@ except Exception:
 app = AsyncApp(token=config.SLACK_BOT_TOKEN)
 client = slack_client
 
+async def request_clarification(client: AsyncWebClient, channel: str, thread_ts: str, logger: logging.Logger) -> None:
+    """Request clarification from the user."""
+    try:
+        await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="I received your message, but it appears to be empty. Could you please let me know how I can help you?"
+        )
+    except Exception as e:
+        logger.exception("Failed to post clarification request: %s", e)
+
 @app.event("app_mention")
 @app.event({"type": "message", "channel_type": "im"})
-async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
+async def handle_mention(body: SlackEventBody, logger: logging.Logger) -> None:
     """Handle mentions and direct messages routed through the Slack Bolt app."""
 
-    event = body["event"]
+    event: SlackEvent = body["event"]
 
-    # Filter non-actionable events early to avoid unnecessary processing
-    subtype = event.get("subtype")
-    if subtype in ("message_changed", "message_deleted", "bot_message"):
-        logger.debug("Ignoring event with subtype=%s", subtype)
-        return
+    # Check if this is a supported event type
+    if not is_supported_event(event, logger):
+        return  # Event not supported, ignore it
 
-    # Skip events from this bot to prevent reply loops
-    bot_id = event.get("bot_id")
-    if bot_id:
-        logger.debug("Ignoring message from bot_id=%s", bot_id)
-        return
-
-    user = event.get("user")
-    if not user:
-        logger.debug("Ignoring event without user field")
-        return
-
+    # Extract essential data from the event
+    user = event["user"]
     channel = event["channel"]
     event_ts = event["event_ts"]
+    thread_ts = event.get("thread_ts")
+    root_ts = thread_ts if thread_ts else event_ts
     channel_type = event.get("channel_type")
+    raw_text = event.get("text", "").strip()
 
-    channel_descriptor = None
-    if isinstance(channel, str):
-        descriptor = channel
-        if isinstance(channel_type, str):
-            type_map = {
-                "im": "direct message",
-                "mpim": "multi-person DM",
-                "group": "private channel",
-                "channel": "public channel",
-            }
-            human_label = type_map.get(channel_type, channel_type)
-            if human_label:
-                descriptor = f"{channel} ({human_label})"
-        channel_descriptor = descriptor
+    channel_descriptor = get_channel_descriptor(channel, channel_type)
 
-    # Clean up only our bot's leading mention token(s), preserving other mentions
-    raw_text = str(event.get("text", ""))
-    logger.debug(
-        "Slack event type=%s channel=%s thread_ts=%s user=%s text_preview=%s",
+    logger.info(
+        "Slack event type=%s channel=%s event_ts=%s thread_ts=%s user=%s text_preview=%s",
         event.get("type"),
         channel,
-        event.get("thread_ts"),
-        user,
-        raw_text[:120],
-    )
-    logger.info(
-        "Incoming Slack message channel=%s thread_ts=%s user=%s text_preview=%s",
-        channel,
-        event.get("thread_ts", ""),
+        event_ts,
+        thread_ts,
         user,
         raw_text[:120],
     )
 
     bot_uid = await get_bot_user_id()
-    if bot_uid:
-        # Remove one or more leading mentions of the bot (e.g., "<@U123> hello")
-        pattern = rf"^\s*(<@{re.escape(bot_uid)}>[:,]?\s*)+"
-        user_message = re.sub(pattern, "", raw_text).strip()
-    else:
-        # Fallback: remove only leading generic mention tokens
-        user_message = re.sub(r"^\s*(<@[^>]+>[:,]?\s*)+", "", raw_text).strip()
+    user_message = clean_user_message(raw_text, bot_uid)
 
     # Handle blank inputs - respond with clarification request
-    if not user_message or not user_message.strip():
+    if not user_message:
         logger.info("Received empty message from user=%s, requesting clarification", user)
-        try:
-            await client.chat_postMessage(
-                channel=channel,
-                thread_ts=event.get("thread_ts", event_ts),
-                text="I received your message, but it appears to be empty. Could you please let me know how I can help you?"
-            )
-        except Exception as e:
-            logger.exception("Failed to post clarification request: %s", e)
+        await request_clarification(client, channel, thread_ts, logger)
         return
-
-    root_ts = event.get("thread_ts", event_ts)
 
     prompt = build_system_prompt(
         current_channel_descriptor=channel_descriptor,
-        current_channel_id=channel if isinstance(channel, str) else None,
-        current_thread_ts=root_ts if isinstance(root_ts, str) else None,
+        current_channel_id=channel,
+        current_thread_ts=root_ts,
     )
 
     messages = [
@@ -171,12 +143,14 @@ async def handle_mention(body: Dict[str, Any], logger: logging.Logger) -> None:
         ai_reply = "Sorry, I couldn't generate a response just now. Please try again."
     else:
         ai_reply = normalise_user_mentions(ai_reply)
+
     try:
         result = await client.chat_postMessage(channel=channel, thread_ts=root_ts, text=ai_reply)
         # Slack client often returns a SlackResponse with a .data dict
         data = getattr(result, "data", None)
         if isinstance(result, dict) and not data:
             data = result
+
         ok = None
         ts = None
         if isinstance(data, dict):

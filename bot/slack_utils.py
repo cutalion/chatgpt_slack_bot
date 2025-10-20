@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import config
 from slack_sdk.web.async_client import AsyncWebClient
+from slack_types import SlackEvent
 
 
 logger = logging.getLogger(__name__)
@@ -426,3 +427,93 @@ async def fetch_channel_history(
         "messages": simplified_messages,
         "truncated": truncated,
     }
+
+
+def is_supported_event(event: SlackEvent, logger: logging.Logger) -> bool:
+    """Check if a Slack event is supported and should be processed.
+    
+    This function encapsulates all the event filtering logic to keep the main
+    handler clean and focused on business logic.
+    
+    Args:
+        event: The Slack event to validate
+        logger: Logger instance for debug messages
+        
+    Returns:
+        True if the event should be processed, False if it should be ignored
+    """
+    # Filter non-actionable events early to avoid unnecessary processing
+    # Only process regular user messages (subtype=None)
+    # See https://docs.slack.dev/reference/events/message/ for complete list of message subtypes
+    ALLOWED_SUBTYPES = {None}
+    subtype = event.get("subtype")
+    if subtype not in ALLOWED_SUBTYPES:
+        logger.debug("Ignoring event with subtype=%s", subtype)
+        return False
+
+    # Skip events from bots to prevent reply loops
+    bot_id = event.get("bot_id")
+    if bot_id:
+        logger.debug("Ignoring message from bot_id=%s", bot_id)
+        return False
+
+    user = event.get("user")
+    if not user:
+        logger.debug("Ignoring event without user field")
+        return False
+
+    channel = event.get("channel")
+    if not channel:
+        logger.debug("Ignoring event without channel field")
+        return False
+
+    event_ts = event.get("event_ts")
+    if not event_ts:
+        logger.debug("Ignoring event without event_ts field")
+        return False
+
+    return True
+
+def get_channel_descriptor(channel: str, channel_type: Optional[str]) -> Optional[str]:
+    """Generate a human-readable descriptor for a Slack channel.
+    
+    Args:
+        channel: The channel ID
+        channel_type: The type of channel (im, mpim, group, channel)
+        
+    Returns:
+        A formatted descriptor string or None if channel is not a string
+    """
+    if not isinstance(channel, str):
+        return None
+        
+    descriptor = channel
+    if isinstance(channel_type, str):
+        type_map = {
+            "im": "direct message",
+            "mpim": "multi-person DM", 
+            "group": "private channel",
+            "channel": "public channel",
+        }
+        human_label = type_map.get(channel_type, channel_type)
+        if human_label:
+            descriptor = f"{channel} ({human_label})"
+    
+    return descriptor
+
+
+def clean_user_message(raw_text: str, bot_uid: str) -> str:
+    """Clean up the user's message to remove any leading mention tokens of the bot.
+    
+    Args:
+        raw_text: The raw text of the user's message
+        bot_uid: The user ID of the bot
+        
+    Returns:
+        The cleaned user message
+    """
+    if not bot_uid:
+        return raw_text.strip()
+
+    pattern = rf"^\s*(<@{re.escape(bot_uid)}>[:,]?\s*)+"
+    return re.sub(pattern, "", str(raw_text)).strip()

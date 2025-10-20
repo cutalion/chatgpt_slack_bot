@@ -3,6 +3,7 @@
 import os
 import sys
 import types
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -958,6 +959,259 @@ class TestMessageSimplificationFunctions:
         assert result["reactions"][1]["name"] == "heart"
 
 
+class TestEventValidationFunctions:
+    """Test event validation and filtering functions."""
+
+    def test_is_supported_event_valid_user_message(self):
+        """Test is_supported_event with valid user message."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Hello world"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is True
+
+    def test_is_supported_event_bot_message_subtype(self):
+        """Test is_supported_event with bot_message subtype (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": "bot_message",
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Bot message"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_message_changed_subtype(self):
+        """Test is_supported_event with message_changed subtype (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": "message_changed",
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Edited message"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_has_bot_id(self):
+        """Test is_supported_event with bot_id present (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "bot_id": "B1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Message from bot"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_missing_user(self):
+        """Test is_supported_event with missing user field (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Message without user"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_empty_user(self):
+        """Test is_supported_event with empty user field (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Message with empty user"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_missing_channel(self):
+        """Test is_supported_event with missing channel field (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Message without channel"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_empty_channel(self):
+        """Test is_supported_event with empty channel field (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "",
+            "event_ts": "1234567890.123456",
+            "text": "Message with empty channel"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_missing_event_ts(self):
+        """Test is_supported_event with missing event_ts field (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "text": "Message without event_ts"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_empty_event_ts(self):
+        """Test is_supported_event with empty event_ts field (should be rejected)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "",
+            "text": "Message with empty event_ts"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False
+
+    def test_is_supported_event_app_mention_event(self):
+        """Test is_supported_event with app_mention event type (should be accepted)."""
+        event = {
+            "type": "app_mention",
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Hello @bot"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is True
+
+    def test_is_supported_event_im_message(self):
+        """Test is_supported_event with direct message (should be accepted)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "D1234567890",
+            "channel_type": "im",
+            "event_ts": "1234567890.123456",
+            "text": "Direct message"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is True
+
+    def test_is_supported_event_with_channel_type(self):
+        """Test is_supported_event with channel_type field (should be accepted)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "channel_type": "channel",
+            "event_ts": "1234567890.123456",
+            "text": "Channel message"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is True
+
+    def test_is_supported_event_with_text(self):
+        """Test is_supported_event with text field (should be accepted)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Message with text"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is True
+
+    def test_is_supported_event_empty_text(self):
+        """Test is_supported_event with empty text field (should be accepted)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": ""
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is True
+
+    def test_is_supported_event_missing_text(self):
+        """Test is_supported_event with missing text field (should be accepted)."""
+        event = {
+            "type": "message",
+            "subtype": None,
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is True
+
+    def test_is_supported_event_minimal_valid_event(self):
+        """Test is_supported_event with minimal valid event."""
+        event = {
+            "type": "message",
+            "user": "U1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is True
+
+    def test_is_supported_event_multiple_rejection_reasons(self):
+        """Test is_supported_event with multiple rejection reasons (bot_id + subtype)."""
+        event = {
+            "type": "message",
+            "subtype": "bot_message",
+            "user": "U1234567890",
+            "bot_id": "B1234567890",
+            "channel": "C1234567890",
+            "event_ts": "1234567890.123456",
+            "text": "Bot message"
+        }
+        logger = logging.getLogger("test")
+        result = slack_utils.is_supported_event(event, logger)
+        assert result is False  # Should fail on first check (subtype)
+
+
 class TestUserMentionFunctions:
     """Test user mention normalization functions."""
 
@@ -980,6 +1234,196 @@ class TestUserMentionFunctions:
     def test_normalise_user_mentions_handles_non_string(self):
         """Test normalise_user_mentions handles non-string input."""
         assert slack_utils.normalise_user_mentions(None) == ""
+
+
+class TestCleanUserMessageFunctions:
+    """Test clean_user_message function."""
+
+    def test_clean_user_message_with_bot_uid_single_mention(self):
+        """Test clean_user_message with single bot mention at start."""
+        result = slack_utils.clean_user_message("<@U1234567890> hello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_multiple_mentions(self):
+        """Test clean_user_message with multiple bot mentions at start."""
+        result = slack_utils.clean_user_message("<@U1234567890> <@U1234567890> hello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_mention_with_colon(self):
+        """Test clean_user_message with bot mention followed by colon."""
+        result = slack_utils.clean_user_message("<@U1234567890>: hello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_mention_with_comma(self):
+        """Test clean_user_message with bot mention followed by comma."""
+        result = slack_utils.clean_user_message("<@U1234567890>, hello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_mention_with_colon_and_comma(self):
+        """Test clean_user_message with bot mention followed by colon and comma."""
+        result = slack_utils.clean_user_message("<@U1234567890>:, hello world", "U1234567890")
+        assert result == ", hello world"  # The regex only matches : or , separately, not both
+
+    def test_clean_user_message_with_bot_uid_whitespace_before_mention(self):
+        """Test clean_user_message with whitespace before bot mention."""
+        result = slack_utils.clean_user_message("  <@U1234567890> hello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_whitespace_after_mention(self):
+        """Test clean_user_message with whitespace after bot mention."""
+        result = slack_utils.clean_user_message("<@U1234567890>   hello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_multiple_whitespace(self):
+        """Test clean_user_message with multiple whitespace around mentions."""
+        result = slack_utils.clean_user_message("  <@U1234567890>  <@U1234567890>  hello world  ", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_no_mention(self):
+        """Test clean_user_message with no bot mention."""
+        result = slack_utils.clean_user_message("hello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_mention_in_middle(self):
+        """Test clean_user_message with bot mention in middle of message."""
+        result = slack_utils.clean_user_message("hello <@U1234567890> world", "U1234567890")
+        assert result == "hello <@U1234567890> world"  # Should not remove middle mentions
+
+    def test_clean_user_message_with_bot_uid_mention_at_end(self):
+        """Test clean_user_message with bot mention at end of message."""
+        result = slack_utils.clean_user_message("hello world <@U1234567890>", "U1234567890")
+        assert result == "hello world <@U1234567890>"  # Should not remove end mentions
+
+    def test_clean_user_message_with_bot_uid_different_bot_mention(self):
+        """Test clean_user_message with different bot mention."""
+        result = slack_utils.clean_user_message("<@U9876543210> hello world", "U1234567890")
+        assert result == "<@U9876543210> hello world"  # Should not remove different bot
+
+    def test_clean_user_message_with_bot_uid_mixed_mentions(self):
+        """Test clean_user_message with mixed bot mentions."""
+        result = slack_utils.clean_user_message("<@U1234567890> <@U9876543210> hello world", "U1234567890")
+        assert result == "<@U9876543210> hello world"  # Should only remove matching bot
+
+    def test_clean_user_message_with_bot_uid_empty_string(self):
+        """Test clean_user_message with empty string."""
+        result = slack_utils.clean_user_message("", "U1234567890")
+        assert result == ""
+
+    def test_clean_user_message_with_bot_uid_whitespace_only(self):
+        """Test clean_user_message with whitespace only."""
+        result = slack_utils.clean_user_message("   ", "U1234567890")
+        assert result == ""
+
+    def test_clean_user_message_with_bot_uid_only_mention(self):
+        """Test clean_user_message with only bot mention."""
+        result = slack_utils.clean_user_message("<@U1234567890>", "U1234567890")
+        assert result == ""
+
+    def test_clean_user_message_with_bot_uid_only_mention_with_punctuation(self):
+        """Test clean_user_message with only bot mention and punctuation."""
+        result = slack_utils.clean_user_message("<@U1234567890>:", "U1234567890")
+        assert result == ""
+
+    def test_clean_user_message_with_bot_uid_special_characters_in_uid(self):
+        """Test clean_user_message with special characters in bot UID."""
+        special_uid = "U123-456_7890"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_unicode_characters(self):
+        """Test clean_user_message with unicode characters."""
+        result = slack_utils.clean_user_message("<@U1234567890> hello 世界", "U1234567890")
+        assert result == "hello 世界"
+
+    def test_clean_user_message_with_bot_uid_newlines(self):
+        """Test clean_user_message with newlines."""
+        result = slack_utils.clean_user_message("<@U1234567890>\nhello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_tabs(self):
+        """Test clean_user_message with tabs."""
+        result = slack_utils.clean_user_message("<@U1234567890>\thello world", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_complex_pattern(self):
+        """Test clean_user_message with complex mention pattern."""
+        result = slack_utils.clean_user_message("  <@U1234567890>: <@U1234567890>, hello world  ", "U1234567890")
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_none_bot_uid(self):
+        """Test clean_user_message with None bot_uid."""
+        result = slack_utils.clean_user_message("<@U1234567890> hello world", None)
+        assert result == "<@U1234567890> hello world"  # Should not remove anything
+
+    def test_clean_user_message_with_bot_uid_empty_bot_uid(self):
+        """Test clean_user_message with empty bot_uid."""
+        result = slack_utils.clean_user_message("<@U1234567890> hello world", "")
+        assert result == "<@U1234567890> hello world"  # Should not remove anything
+
+    def test_clean_user_message_with_bot_uid_none_raw_text(self):
+        """Test clean_user_message with None raw_text."""
+        result = slack_utils.clean_user_message(None, "U1234567890")
+        assert result == "None"  # str(None) converts to "None"
+
+    def test_clean_user_message_with_bot_uid_non_string_raw_text(self):
+        """Test clean_user_message with non-string raw_text."""
+        result = slack_utils.clean_user_message(123, "U1234567890")
+        assert result == "123"
+
+    def test_clean_user_message_with_bot_uid_very_long_message(self):
+        """Test clean_user_message with very long message."""
+        long_message = "<@U1234567890> " + "hello " * 1000
+        result = slack_utils.clean_user_message(long_message, "U1234567890")
+        expected = ("hello " * 1000).strip()  # Note: the trailing space is removed by strip()
+        assert result == expected
+
+    def test_clean_user_message_with_bot_uid_regex_special_chars_in_uid(self):
+        """Test clean_user_message with regex special characters in UID."""
+        special_uid = "U123.456+7890"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_question_mark_in_uid(self):
+        """Test clean_user_message with question mark in UID."""
+        special_uid = "U123?456"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_parentheses_in_uid(self):
+        """Test clean_user_message with parentheses in UID."""
+        special_uid = "U123(456)7890"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_square_brackets_in_uid(self):
+        """Test clean_user_message with square brackets in UID."""
+        special_uid = "U123[456]7890"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_curly_braces_in_uid(self):
+        """Test clean_user_message with curly braces in UID."""
+        special_uid = "U123{456}7890"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_pipe_in_uid(self):
+        """Test clean_user_message with pipe character in UID."""
+        special_uid = "U123|456"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_caret_in_uid(self):
+        """Test clean_user_message with caret in UID."""
+        special_uid = "U123^456"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
+
+    def test_clean_user_message_with_bot_uid_dollar_in_uid(self):
+        """Test clean_user_message with dollar sign in UID."""
+        special_uid = "U123$456"
+        result = slack_utils.clean_user_message(f"<@{special_uid}> hello world", special_uid)
+        assert result == "hello world"
 
 
 class TestChannelHistoryFunctions:
@@ -1066,3 +1510,136 @@ class TestChannelHistoryFunctions:
         assert requested["oldest"]
         assert requested["limit"] == 5
         assert requested["thread_limit"] == 1
+
+
+class TestChannelDescriptorFunctions:
+    """Test the get_channel_descriptor function."""
+
+    def test_im_channel(self):
+        """Test direct message channel descriptor."""
+        result = slack_utils.get_channel_descriptor("D1234567890", "im")
+        assert result == "D1234567890 (direct message)"
+
+    def test_public_channel(self):
+        """Test public channel descriptor."""
+        result = slack_utils.get_channel_descriptor("C1234567890", "channel")
+        assert result == "C1234567890 (public channel)"
+
+    def test_private_channel(self):
+        """Test private channel descriptor."""
+        result = slack_utils.get_channel_descriptor("G1234567890", "group")
+        assert result == "G1234567890 (private channel)"
+
+    def test_mpim_channel(self):
+        """Test multi-person direct message descriptor."""
+        result = slack_utils.get_channel_descriptor("G1234567890", "mpim")
+        assert result == "G1234567890 (multi-person DM)"
+
+    def test_unknown_channel_type(self):
+        """Test unknown channel type returns the type as-is."""
+        result = slack_utils.get_channel_descriptor("C1234567890", "unknown_type")
+        assert result == "C1234567890 (unknown_type)"
+
+    def test_none_channel_type(self):
+        """Test None channel type returns just the channel ID."""
+        result = slack_utils.get_channel_descriptor("C1234567890", None)
+        assert result == "C1234567890"
+
+    def test_empty_string_channel_type(self):
+        """Test empty string channel type returns just the channel ID."""
+        result = slack_utils.get_channel_descriptor("C1234567890", "")
+        assert result == "C1234567890"
+
+    def test_non_string_channel(self):
+        """Test non-string channel returns None."""
+        result = slack_utils.get_channel_descriptor(123, "channel")
+        assert result is None
+
+    def test_non_string_channel_with_none_type(self):
+        """Test non-string channel with None type returns None."""
+        result = slack_utils.get_channel_descriptor(123, None)
+        assert result is None
+
+    def test_none_channel(self):
+        """Test None channel returns None."""
+        result = slack_utils.get_channel_descriptor(None, "channel")
+        assert result is None
+
+    def test_empty_string_channel(self):
+        """Test empty string channel returns empty string."""
+        result = slack_utils.get_channel_descriptor("", "channel")
+        assert result == " (public channel)"
+
+    def test_whitespace_channel(self):
+        """Test whitespace-only channel returns whitespace with type."""
+        result = slack_utils.get_channel_descriptor("   ", "channel")
+        assert result == "    (public channel)"
+
+    def test_channel_with_special_characters(self):
+        """Test channel ID with special characters."""
+        result = slack_utils.get_channel_descriptor("C123-ABC_456", "channel")
+        assert result == "C123-ABC_456 (public channel)"
+
+    def test_all_channel_types(self):
+        """Test all known channel types."""
+        test_cases = [
+            ("im", "direct message"),
+            ("mpim", "multi-person DM"),
+            ("group", "private channel"),
+            ("channel", "public channel"),
+        ]
+        
+        for channel_type, expected_label in test_cases:
+            result = slack_utils.get_channel_descriptor("C1234567890", channel_type)
+            assert result == f"C1234567890 ({expected_label})"
+
+    def test_channel_type_case_sensitivity(self):
+        """Test that channel type matching is case sensitive."""
+        result = slack_utils.get_channel_descriptor("C1234567890", "CHANNEL")
+        assert result == "C1234567890 (CHANNEL)"
+
+    def test_channel_type_with_whitespace(self):
+        """Test channel type with leading/trailing whitespace."""
+        result = slack_utils.get_channel_descriptor("C1234567890", " channel ")
+        assert result == "C1234567890 ( channel )"
+
+    @pytest.mark.parametrize("channel_type,expected_label", [
+        ("im", "direct message"),
+        ("mpim", "multi-person DM"),
+        ("group", "private channel"),
+        ("channel", "public channel"),
+        ("unknown", "unknown"),
+        ("", ""),
+        (None, None),
+    ])
+    def test_channel_types_parametrized(self, channel_type, expected_label):
+        """Test various channel types with parametrized test."""
+        result = slack_utils.get_channel_descriptor("C1234567890", channel_type)
+        if expected_label is None:
+            assert result == "C1234567890"
+        elif expected_label == "":
+            assert result == "C1234567890"
+        else:
+            assert result == f"C1234567890 ({expected_label})"
+
+    @pytest.mark.parametrize("channel,channel_type,expected", [
+        # Valid string channels
+        ("D1234567890", "im", "D1234567890 (direct message)"),
+        ("C1234567890", "channel", "C1234567890 (public channel)"),
+        ("G1234567890", "group", "G1234567890 (private channel)"),
+        ("G1234567890", "mpim", "G1234567890 (multi-person DM)"),
+        ("C1234567890", "unknown", "C1234567890 (unknown)"),
+        ("C1234567890", None, "C1234567890"),
+        ("C1234567890", "", "C1234567890"),
+        
+        # Invalid channels (non-string)
+        (123, "channel", None),
+        (None, "channel", None),
+        ([], "channel", None),
+        ({}, "channel", None),
+        (True, "channel", None),
+    ])
+    def test_comprehensive_scenarios(self, channel, channel_type, expected):
+        """Test comprehensive scenarios with parametrized test."""
+        result = slack_utils.get_channel_descriptor(channel, channel_type)
+        assert result == expected
