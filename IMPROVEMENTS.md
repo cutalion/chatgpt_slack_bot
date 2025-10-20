@@ -5,7 +5,6 @@ Grouped roughly by priority (highest first) and area of impact.
 
 ## High-Priority Stabilisations
 
-- **Skip duplicate prompt entries.** Filter history items so the triggering message is not added twice (`conversations_replies` already returns it). Prevents confusing the LLM and trimming useful context earlier.
 - **Filter non-actionable events.** Ignore events with subtypes (edits, deletions, bot messages) and messages authored by this bot before doing any lookups. Avoids reply loops and `KeyError` on missing fields.
 - **Batch user lookups.** Reuse author data embedded in history payloads, cache aggressively, and parallelise any remaining `users_info` requests. Cuts latency and rate-limit risk when threads are long.
 - **Fail fast on bad configuration.** Validate `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `OPENAI_API_KEY`, and `GPT_MODEL` during startup with explicit errors and safe defaults (e.g. default model `gpt-4o-mini`).

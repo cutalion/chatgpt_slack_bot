@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import config
 from slack_sdk.web.async_client import AsyncWebClient
-from slack_types import SlackEvent
+from slack_types import SlackEvent, ThreadHistoryMessage
 
 
 logger = logging.getLogger(__name__)
@@ -517,3 +517,70 @@ def clean_user_message(raw_text: str, bot_uid: str) -> str:
 
     pattern = rf"^\s*(<@{re.escape(bot_uid)}>[:,]?\s*)+"
     return re.sub(pattern, "", str(raw_text)).strip()
+
+
+def build_conversation_messages(
+    *,
+    system_prompt: str,
+    thread_history: List[ThreadHistoryMessage],
+    current_event_ts: str,
+    current_user_display: str,
+    current_user_id: str,
+    current_message_text: str,
+    bot_name: str,
+    history_limit: int,
+) -> List[Dict[str, Any]]:
+    """Build the messages array for LLM from thread history and current event.
+    
+    Filters out the triggering message from history to prevent duplicates,
+    since conversations_replies includes it but we add it explicitly.
+    
+    Args:
+        system_prompt: System instructions for the LLM
+        thread_history: Raw messages from conversations.replies API (already formatted with author names)
+        current_event_ts: Timestamp of the triggering event
+        current_user_display: Display name of current message author
+        current_user_id: User ID of current message author
+        current_message_text: The cleaned user message text
+        bot_name: Bot display name for assistant messages
+        history_limit: Max history messages to include
+    
+    Returns:
+        List of message dicts with role/content for LLM consumption
+    """
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Process thread history, skipping the triggering message to prevent duplicates
+    for message in thread_history[-history_limit:]:
+        # Skip the triggering message - it will be added separately below
+        if message.get("ts") == current_event_ts:
+            continue
+
+        role = "assistant" if "bot_id" in message else "user"
+        user_id = message.get("user") if role == "user" else None
+        
+        # Resolve author name and timestamp
+        if role == "assistant":
+            author = bot_name
+        else:
+            # For user messages, the display name should already be resolved
+            # and included in the message text from the caller
+            author = "User"  # Fallback if not pre-formatted
+        
+        prefix = f"{format_ts_utc(message.get('ts'))} {author}"
+        if user_id:
+            prefix += f" (<@{user_id}>)"
+        prefix += ": "
+        
+        content_text = message.get("text", "")
+        messages.append({"role": role, "content": prefix + content_text})
+
+    # Add the current event message with author/time prefix
+    current_prefix = f"{format_ts_utc(current_event_ts)} {current_user_display}"
+    if current_user_id and current_user_id.strip():
+        current_prefix += f" (<@{current_user_id}>)"
+    current_prefix += ": "
+    
+    messages.append({"role": "user", "content": current_prefix + current_message_text})
+    
+    return messages

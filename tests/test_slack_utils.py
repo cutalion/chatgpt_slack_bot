@@ -1512,6 +1512,135 @@ class TestChannelHistoryFunctions:
         assert requested["thread_limit"] == 1
 
 
+class TestBuildConversationMessages:
+    """Test the build_conversation_messages function."""
+
+    def test_build_conversation_messages_skips_duplicate_event(self, monkeypatch):
+        """Verify triggering message from history is not duplicated."""
+        from slack_types import ThreadHistoryMessage
+        
+        # Mock format_ts_utc to return consistent timestamps
+        monkeypatch.setattr(slack_utils, "format_ts_utc", lambda ts: f"[{ts}]")
+        
+        # Pre-formatted history (as if user names were already resolved)
+        thread_history: List[ThreadHistoryMessage] = [
+            {"ts": "100.0", "user": "U1", "text": "first message"},
+            {"ts": "200.0", "user": "U2", "text": "second message"},
+            {"ts": "300.0", "user": "U3", "text": "triggering message"},
+        ]
+        
+        messages = slack_utils.build_conversation_messages(
+            system_prompt="You are a bot",
+            thread_history=thread_history,
+            current_event_ts="300.0",  # Same as last message in history
+            current_user_display="Charlie",
+            current_user_id="U3",
+            current_message_text="triggering message",
+            bot_name="TestBot",
+            history_limit=20,
+        )
+        
+        # Count occurrences of "triggering message"
+        triggering_content = [m["content"] for m in messages if "triggering message" in m["content"]]
+        assert len(triggering_content) == 1, f"Expected 1 occurrence of 'triggering message', got {len(triggering_content)}: {triggering_content}"
+        
+        # Verify structure: system + history (excluding duplicate) + current
+        assert len(messages) == 4  # system + 2 history + 1 current
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == "You are a bot"
+        
+        # The last message should be the current user message
+        assert messages[-1]["role"] == "user"
+        assert "triggering message" in messages[-1]["content"]
+        assert "Charlie" in messages[-1]["content"]
+
+    def test_build_conversation_messages_with_bot_messages(self, monkeypatch):
+        """Verify bot messages are marked as assistant role."""
+        from slack_types import ThreadHistoryMessage
+        
+        monkeypatch.setattr(slack_utils, "format_ts_utc", lambda ts: f"[{ts}]")
+        
+        thread_history: List[ThreadHistoryMessage] = [
+            {"ts": "100.0", "user": "U1", "text": "user question"},
+            {"ts": "200.0", "bot_id": "B123", "text": "bot response", "username": "testbot"},
+        ]
+        
+        messages = slack_utils.build_conversation_messages(
+            system_prompt="You are a bot",
+            thread_history=thread_history,
+            current_event_ts="300.0",
+            current_user_display="Alice",
+            current_user_id="U1",
+            current_message_text="follow up",
+            bot_name="TestBot",
+            history_limit=20,
+        )
+        
+        # Find the bot message
+        bot_messages = [m for m in messages if m["role"] == "assistant"]
+        assert len(bot_messages) == 1
+        assert "bot response" in bot_messages[0]["content"]
+        assert "TestBot" in bot_messages[0]["content"]  # Should use provided bot_name
+
+    def test_build_conversation_messages_empty_history(self, monkeypatch):
+        """Verify function works with empty thread history."""
+        from slack_types import ThreadHistoryMessage
+        
+        monkeypatch.setattr(slack_utils, "format_ts_utc", lambda ts: f"[{ts}]")
+        
+        messages = slack_utils.build_conversation_messages(
+            system_prompt="You are a bot",
+            thread_history=[],
+            current_event_ts="100.0",
+            current_user_display="Alice",
+            current_user_id="U1",
+            current_message_text="hello",
+            bot_name="TestBot",
+            history_limit=20,
+        )
+        
+        # Should have system + current message only
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert "hello" in messages[1]["content"]
+
+    def test_build_conversation_messages_respects_history_limit(self, monkeypatch):
+        """Verify function respects history_limit parameter."""
+        from slack_types import ThreadHistoryMessage
+        
+        monkeypatch.setattr(slack_utils, "format_ts_utc", lambda ts: f"[{ts}]")
+        
+        # Create more history than the limit
+        thread_history: List[ThreadHistoryMessage] = [
+            {"ts": f"{i}.0", "user": "U1", "text": f"message {i}"}
+            for i in range(1, 6)  # 5 messages
+        ]
+        
+        messages = slack_utils.build_conversation_messages(
+            system_prompt="You are a bot",
+            thread_history=thread_history,
+            current_event_ts="6.0",
+            current_user_display="Alice",
+            current_user_id="U1",
+            current_message_text="current",
+            bot_name="TestBot",
+            history_limit=3,  # Only 3 history messages should be included
+        )
+        
+        # Should have system + 3 history + 1 current = 5 total
+        assert len(messages) == 5
+        assert messages[0]["role"] == "system"
+        assert messages[-1]["role"] == "user"
+        
+        # Should include the last 3 history messages (3, 4, 5)
+        history_messages = [m for m in messages[1:-1] if m["role"] == "user"]
+        assert len(history_messages) == 3
+        assert "message 3" in history_messages[0]["content"]
+        assert "message 4" in history_messages[1]["content"]
+        assert "message 5" in history_messages[2]["content"]
+
+
 class TestChannelDescriptorFunctions:
     """Test the get_channel_descriptor function."""
 

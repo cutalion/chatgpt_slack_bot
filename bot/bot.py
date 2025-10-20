@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, cast
 import config
 from prompt import build_system_prompt
-from llm import generate_ai_reply
+import llm
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 from slack_sdk.web.async_client import AsyncWebClient
@@ -18,6 +18,7 @@ from slack_utils import (
     slack_client,
     is_supported_event,
     clean_user_message,
+    build_conversation_messages,
 )
 from slack_utils import get_channel_descriptor
 
@@ -90,46 +91,63 @@ async def handle_mention(body: SlackEventBody, logger: logging.Logger) -> None:
         current_thread_ts=root_ts,
     )
 
-    messages = [
-        {"role": "system", "content": prompt},
-    ]
-
-    # If this is part of a thread, load recent replies for additional context
+    # Prepare thread history if this is part of a thread
+    thread_history = []
     if "thread_ts" in event:
-        # Intentionally quiet unless errors occur
+        try:
+            conversation_history = await client.conversations_replies(
+                channel=channel,
+                ts=root_ts,
+                limit=config.HISTORY_LIMIT,
+            )
+            raw_history = conversation_history.get("messages", [])
+            
+            # Pre-format history messages with resolved author names
+            for message in raw_history:
+                role = "assistant" if "bot_id" in message else "user"
+                user_id = message.get("user") if role == "user" else None
+                
+                # Resolve author name
+                if role == "assistant":
+                    author = config.BOT_NAME or get_bot_name_from_message(message)
+                else:
+                    author = await get_user_display_name(user_id)
+                
+                # Create pre-formatted message with author name
+                prefix = f"{format_ts_utc(message.get('ts'))} {author}"
+                if user_id:
+                    prefix += f" (<@{user_id}>)"
+                prefix += ": "
+                
+                formatted_message = {
+                    "ts": message.get("ts"),
+                    "user": message.get("user"),
+                    "bot_id": message.get("bot_id"),
+                    "text": prefix + message.get("text", ""),
+                }
+                thread_history.append(formatted_message)
+                
+        except Exception as exc:
+            logger.debug("Failed to fetch thread history for %s: %s", channel, exc)
+            # Continue without history rather than crashing
 
-        conversation_history = await client.conversations_replies(channel=channel, ts=root_ts, limit=config.HISTORY_LIMIT)
-        history = conversation_history.get("messages", [])
-
-        for message in history[-config.HISTORY_LIMIT:]:
-            # Skip the triggering message - it will be added separately below
-            if message.get("ts") == event_ts:
-                continue
-
-            role = "assistant" if "bot_id" in message else "user"
-            user_id = message.get("user") if role == "user" else None
-            # Resolve author name and timestamp
-            if role == "assistant":
-                author = config.BOT_NAME or get_bot_name_from_message(message)
-            else:
-                author = await get_user_display_name(user_id)
-            prefix = f"{format_ts_utc(message.get('ts'))} {author}"
-            if user_id:
-                prefix += f" (<@{user_id}>)"
-            prefix += ": "
-            content_text = message.get("text", "")
-            messages.append({"role": role, "content": prefix + content_text})
-
-    # Prefix the current event message with author/time as well
+    # Get current user display name
     try:
         current_author = await get_user_display_name(user)
     except Exception:
         current_author = str(user)
-    current_prefix = f"{format_ts_utc(event_ts)} {current_author}"
-    if isinstance(user, str) and user.strip():
-        current_prefix += f" (<@{user}>)"
-    current_prefix += ": "
-    messages.append({"role": "user", "content": current_prefix + user_message })
+
+    # Build messages using the pure function
+    messages = build_conversation_messages(
+        system_prompt=prompt,
+        thread_history=thread_history,
+        current_event_ts=event_ts,
+        current_user_display=current_author,
+        current_user_id=user,
+        current_message_text=user_message,
+        bot_name=config.BOT_NAME or "Bot",
+        history_limit=config.HISTORY_LIMIT,
+    )
 
     slack_context = {
         "channel_id": channel,
@@ -138,7 +156,7 @@ async def handle_mention(body: SlackEventBody, logger: logging.Logger) -> None:
         "root_thread_ts": root_ts,
     }
 
-    ai_reply = await generate_ai_reply(messages, slack_context=slack_context)
+    ai_reply = await llm.generate_ai_reply(messages, slack_context=slack_context)
     if not ai_reply:
         ai_reply = "Sorry, I couldn't generate a response just now. Please try again."
     else:

@@ -56,6 +56,25 @@ class MessageImEvent(MessageEventBase):
 
 SlackEvent = Union[AppMentionEvent, MessageImEvent]
 
+class ThreadHistoryMessage(TypedDict, total=False):
+    """Message format returned by conversations.replies API.
+    
+    Based on: https://api.slack.com/methods/conversations.replies
+    This matches the structure Slack returns in thread history.
+    """
+    ts: str                    # message timestamp (required in practice)
+    user: str                  # user id who posted
+    bot_id: str                # present on bot messages
+    username: str              # display name (on bot messages)
+    text: str                  # message text content
+    thread_ts: str             # parent thread timestamp
+    parent_user_id: str        # user who started the thread
+    reply_count: int           # number of replies (on parent)
+    reactions: List[Any]       # reactions to this message
+    files: List[Any]           # attached files
+    subtype: Optional[str]     # message subtype if any
+    bot_profile: Optional[Any] # bot profile data
+
 class SlackEventBody(TypedDict):
     """Type definition for the body parameter passed to Slack event handlers."""
     token: str  # Verification token
