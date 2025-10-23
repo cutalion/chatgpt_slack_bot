@@ -1510,6 +1510,47 @@ class TestChannelHistoryFunctions:
         assert requested["oldest"]
         assert requested["limit"] == 5
         assert requested["thread_limit"] == 1
+        assert result["next_cursor"] is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_channel_history_exposes_next_cursor(self, monkeypatch):
+        """Verify pagination cursors are surfaced and accepted."""
+
+        class DummyClient:
+            def __init__(self):
+                self.history_calls = []
+
+            async def conversations_history(self, **kwargs):
+                self.history_calls.append(kwargs)
+                if len(self.history_calls) == 1:
+                    return {
+                        "ok": True,
+                        "messages": [{"ts": "1.0", "user": "U1", "text": "page one"}],
+                        "has_more": True,
+                        "response_metadata": {"next_cursor": "cursor_next"},
+                    }
+                return {
+                    "ok": True,
+                    "messages": [{"ts": "2.0", "user": "U2", "text": "page two"}],
+                    "has_more": False,
+                    "response_metadata": {"next_cursor": ""},
+                }
+
+            async def conversations_replies(self, **kwargs):
+                raise AssertionError("Threads should not be fetched in this test")
+
+        dummy_client = DummyClient()
+        monkeypatch.setattr(slack_utils, "slack_client", dummy_client)
+
+        first_page = await slack_utils.fetch_channel_history("C123", limit=3)
+        assert first_page["truncated"] is True
+        assert first_page["next_cursor"] == "cursor_next"
+        assert first_page["requested"]["cursor"] is None
+
+        second_page = await slack_utils.fetch_channel_history("C123", limit=3, cursor="cursor_next")
+        assert second_page["truncated"] is False
+        assert second_page["next_cursor"] is None
+        assert dummy_client.history_calls[1]["cursor"] == "cursor_next"
 
 
 class TestBuildConversationMessages:

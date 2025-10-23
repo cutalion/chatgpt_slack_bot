@@ -123,7 +123,20 @@ async def test_read_channel_history_uses_helper(monkeypatch, caplog):
         assert kwargs["oldest"] == "2024-05-01"
         assert kwargs["limit"] == 30
         assert kwargs["max_thread_messages"] == 10
-        return {"channel_id": channel_id, "messages": [{"ts": "1", "text": "hello"}]}
+        assert kwargs["cursor"] == "cursor_123"
+        return {
+            "channel_id": channel_id,
+            "messages": [{"ts": "1", "text": "hello"}],
+            "truncated": True,
+            "next_cursor": "cursor_124",
+            "requested": {
+                "oldest": "2024-05-01",
+                "latest": None,
+                "limit": 30,
+                "thread_limit": 10,
+                "cursor": "cursor_123",
+            },
+        }
 
     monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
 
@@ -137,6 +150,7 @@ async def test_read_channel_history_uses_helper(monkeypatch, caplog):
             "oldest": "2024-05-01",
             "max_messages": 30,
             "max_thread_messages": 10,
+            "cursor": "cursor_123",
         },
     }
 
@@ -145,6 +159,7 @@ async def test_read_channel_history_uses_helper(monkeypatch, caplog):
 
     assert payload["channel_id"] == "C123"
     assert payload["messages"][0]["text"] == "hello"
+    assert payload["next_cursor"] == "cursor_124"
 
     log_messages = [record.getMessage() for record in caplog.records if "Slack tool call" in record.getMessage()]
     assert any("'tool': 'read_channel_history'" in message for message in log_messages)

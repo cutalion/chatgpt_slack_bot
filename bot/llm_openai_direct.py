@@ -603,19 +603,40 @@ class OpenAIDirectAgent:
 
         handled_any = False
         pending_unhandled: List[str] = []
+        pending_tool_calls: List[Dict[str, Any]] = []
         remaining = runner.max_calls
+        iteration = 0
         current = resp
+        tool_limit_hit = False
 
-        while remaining > 0:
+        while True:
             calls = self._extract_tool_calls(current)
             if not calls:
+                break
+            iteration += 1
+            if remaining <= 0:
+                tool_limit_hit = True
+                pending_tool_calls.extend(calls)
+                pending_unhandled = [call.get("name") or "" for call in calls]
+                logger.info(
+                    "Slack tool call limit reached (max=%s); pending calls=%s",
+                    runner.max_calls,
+                    pending_unhandled,
+                )
                 break
             supported = [call for call in calls if runner.can_handle(call.get("name"))]
             unsupported = [call for call in calls if not runner.can_handle(call.get("name"))]
             if unsupported:
+                pending_tool_calls.extend(unsupported)
                 pending_unhandled = [call.get("name") or "" for call in unsupported]
                 logger.debug("Encountered unsupported tool calls: %s", pending_unhandled)
                 break
+            logger.info(
+                "Submitting %d Slack tool calls (iteration=%d, remaining=%d)",
+                len(supported),
+                iteration,
+                remaining,
+            )
             outputs = await runner.execute(supported)
             if not outputs:
                 logger.debug("Slack tool runner produced no outputs; stopping")
@@ -645,6 +666,11 @@ class OpenAIDirectAgent:
             if not formatted_outputs:
                 logger.debug("No valid formatted tool outputs to submit; stopping")
                 break
+            logger.info(
+                "Posting tool outputs to OpenAI (iteration=%d, remaining=%d)",
+                iteration,
+                remaining,
+            )
             request_kwargs: Dict[str, Any] = {
                 "model": self.model,
                 "input": formatted_outputs,
@@ -656,10 +682,77 @@ class OpenAIDirectAgent:
             if tool_definitions:
                 request_kwargs["tools"] = tool_definitions
             call_number = runner.max_calls - remaining + 1
+            logger.info(
+                "Calling OpenAI follow-up %d/%d", call_number, runner.max_calls
+            )
             current = await self.aclient.responses.create(**request_kwargs)
             self._log_usage_metrics(current, context=f"tool-followup-{call_number}")
             handled_any = True
             remaining -= 1
+        if tool_limit_hit:
+            response_id = self._get(current, "id")
+            if response_id:
+                if pending_tool_calls:
+                    fallback_outputs: List[Dict[str, Any]] = []
+                    for pending_call in pending_tool_calls:
+                        call_id = pending_call.get("call_id") or pending_call.get("id")
+                        if not call_id:
+                            continue
+                        fallback_outputs.append(
+                            {
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": '{"error": "slack_tool_limit_reached"}',
+                            }
+                        )
+                    if fallback_outputs:
+                        submit_kwargs: Dict[str, Any] = {
+                            "model": self.model,
+                            "input": fallback_outputs,
+                            "previous_response_id": response_id,
+                            "max_output_tokens": max_output_tokens,
+                        }
+                        if instructions:
+                            submit_kwargs["instructions"] = instructions
+                        if tool_definitions:
+                            submit_kwargs["tools"] = tool_definitions
+                        current = await self.aclient.responses.create(**submit_kwargs)
+                        self._log_usage_metrics(current, context="tool-followup-limit-output")
+                        handled_any = True
+                        response_id = self._get(current, "id") or response_id
+                fallback_note = (
+                    "\n\nSlack tool call limit was reached after "
+                    f"{runner.max_calls} calls. Summarise using the data already fetched, "
+                    "note any remaining pagination cursors, and do not call additional tools."
+                )
+                fallback_instructions = (instructions or "") + fallback_note
+                request_kwargs = {
+                    "model": self.model,
+                    "input": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_text",
+                                    "text": (
+                                        "Slack tool call limit reached. "
+                                        "Respond with your findings based on the messages already retrieved. "
+                                        "If more history might exist, mention the remaining cursor or limitations. "
+                                        "Do not call additional tools."
+                                    ),
+                                }
+                            ],
+                        }
+                    ],
+                    "previous_response_id": response_id,
+                    "max_output_tokens": max_output_tokens,
+                    "tool_choice": "none",
+                    "instructions": fallback_instructions.strip(),
+                }
+                current = await self.aclient.responses.create(**request_kwargs)
+                self._log_usage_metrics(current, context="tool-followup-limit")
+                handled_any = True
+                pending_unhandled = []
         return current, handled_any, pending_unhandled
 
 

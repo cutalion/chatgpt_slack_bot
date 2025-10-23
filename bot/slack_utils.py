@@ -267,6 +267,7 @@ async def fetch_channel_history(
     limit: Optional[int] = None,
     include_threads: bool = True,
     max_thread_messages: Optional[int] = None,
+    cursor: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Fetch recent channel history with optional thread expansion."""
 
@@ -291,51 +292,40 @@ async def fetch_channel_history(
 
     oldest_ts = _normalise_ts(oldest)
     latest_ts = _normalise_ts(latest)
+    cursor_token: Optional[str] = None
+    if isinstance(cursor, str) and cursor.strip():
+        cursor_token = cursor.strip()
 
-    collected: List[Dict[str, Any]] = []
-    cursor: Optional[str] = None
-    truncated = False
+    kwargs: Dict[str, Any] = {
+        "channel": channel_id,
+        "limit": min(page_size, message_cap),
+        "inclusive": True,
+    }
+    if cursor_token:
+        kwargs["cursor"] = cursor_token
+    if oldest_ts:
+        kwargs["oldest"] = oldest_ts
+    if latest_ts:
+        kwargs["latest"] = latest_ts
 
-    while len(collected) < message_cap:
-        kwargs: Dict[str, Any] = {
-            "channel": channel_id,
-            "limit": min(page_size, message_cap - len(collected)),
-            "inclusive": True,
-        }
-        if cursor:
-            kwargs["cursor"] = cursor
-        if oldest_ts:
-            kwargs["oldest"] = oldest_ts
-        if latest_ts:
-            kwargs["latest"] = latest_ts
+    try:
+        history = await slack_client.conversations_history(**kwargs)
+    except Exception as exc:
+        logger.debug("Failed to fetch channel history for %s: %s", channel_id, exc)
+        return {"channel_id": channel_id, "error": "history_fetch_failed"}
 
-        try:
-            history = await slack_client.conversations_history(**kwargs)
-        except Exception as exc:
-            logger.debug("Failed to fetch channel history for %s: %s", channel_id, exc)
-            return {"channel_id": channel_id, "error": "history_fetch_failed"}
+    data = getattr(history, "data", None)
+    if isinstance(history, dict) and not data:
+        data = history
+    if not isinstance(data, dict):
+        return {"channel_id": channel_id, "error": "history_fetch_failed"}
 
-        data = getattr(history, "data", None)
-        if isinstance(history, dict) and not data:
-            data = history
-        if not isinstance(data, dict):
-            return {"channel_id": channel_id, "error": "history_fetch_failed"}
-
-        messages: List[Dict[str, Any]] = data.get("messages") or []
-        for message in messages:
-            if len(collected) >= message_cap:
-                truncated = True
-                break
-            collected.append(message)
-
-        response_meta = data.get("response_metadata") or {}
-        cursor = response_meta.get("next_cursor") or None
-        has_more = bool(data.get("has_more"))
-        if not cursor or not has_more:
-            break
-
-    if cursor:
-        truncated = True
+    messages: List[Dict[str, Any]] = data.get("messages") or []
+    collected = messages[: min(message_cap, len(messages))]
+    response_meta = data.get("response_metadata") or {}
+    next_cursor = response_meta.get("next_cursor") or None
+    has_more = bool(data.get("has_more")) and bool(next_cursor)
+    truncated = has_more or len(messages) > len(collected)
 
     simplified_messages: List[Dict[str, Any]] = []
 
@@ -413,7 +403,11 @@ async def fetch_channel_history(
         simplified_messages.append(simplified)
 
     logger.info(
-        "Fetched %d messages (truncated=%s) for channel %s", len(simplified_messages), truncated, channel_id
+        "Fetched %d messages (truncated=%s, next_cursor=%s) for channel %s",
+        len(simplified_messages),
+        truncated,
+        bool(next_cursor),
+        channel_id,
     )
 
     return {
@@ -423,9 +417,11 @@ async def fetch_channel_history(
             "latest": latest_ts,
             "limit": message_cap,
             "thread_limit": thread_cap,
+            "cursor": cursor_token,
         },
         "messages": simplified_messages,
         "truncated": truncated,
+        "next_cursor": next_cursor if truncated and next_cursor else None,
     }
 
 

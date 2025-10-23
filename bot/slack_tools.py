@@ -40,7 +40,8 @@ _READ_CHANNEL_HISTORY_DEFINITION = {
     "description": (
         "Fetch recent messages from a channel within a specified range and optionally include replies from threads. "
         "Use this before summarising extended discussions or weekly activity. "
-        "If no time window is provided, the latest messages are returned automatically."
+        "If no time window is provided, the latest messages are returned automatically. "
+        "When the response includes `next_cursor` and `truncated: true`, call the tool again with that cursor to continue paging."
     ),
     "parameters": {
         "type": "object",
@@ -60,12 +61,16 @@ _READ_CHANNEL_HISTORY_DEFINITION = {
             "max_messages": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Maximum number of channel messages to return (defaults to configured cap).",
+                "description": "Maximum number of channel messages to return in this call (defaults to configured cap).",
             },
             "max_thread_messages": {
                 "type": "integer",
                 "minimum": 0,
                 "description": "Maximum replies to fetch per thread root (defaults to configured cap).",
+            },
+            "cursor": {
+                "type": "string",
+                "description": "Pagination cursor from a previous read_channel_history call (`result.next_cursor`). Leave blank to start from the newest page.",
             },
         },
         "required": [],
@@ -164,6 +169,7 @@ class SlackToolRunner:
         latest = arguments.get("latest")
         max_messages = arguments.get("max_messages")
         max_thread_messages = arguments.get("max_thread_messages")
+        cursor = arguments.get("cursor")
 
         result = await fetch_channel_history(
             channel_id,
@@ -172,6 +178,7 @@ class SlackToolRunner:
             limit=max_messages,
             include_threads=True,
             max_thread_messages=max_thread_messages,
+            cursor=cursor,
         )
 
         needs_fallback = (
@@ -196,9 +203,11 @@ class SlackToolRunner:
                     requested_info = {
                         "oldest": result["requested"].get("oldest"),
                         "latest": result["requested"].get("latest"),
+                        "cursor": result["requested"].get("cursor"),
                     }
                 else:
-                    requested_info = {"oldest": oldest, "latest": latest}
+                    requested_info = {"oldest": oldest, "latest": latest, "cursor": cursor}
+                requested_info = {key: value for key, value in requested_info.items() if value is not None}
 
                 fallback_requested = fallback_result.get("requested")
                 if not isinstance(fallback_requested, dict):
@@ -246,7 +255,14 @@ class SlackToolRunner:
             user_id = arguments.get("user_id")
             return {"user_id": user_id} if isinstance(user_id, str) else {}
         if tool_name == "read_channel_history":
-            allowed_keys = ("channel_id", "oldest", "latest", "max_messages", "max_thread_messages")
+            allowed_keys = (
+                "channel_id",
+                "oldest",
+                "latest",
+                "max_messages",
+                "max_thread_messages",
+                "cursor",
+            )
             return {key: arguments.get(key) for key in allowed_keys if key in arguments}
         return {
             key: value
@@ -267,6 +283,7 @@ class SlackToolRunner:
                 "messages": message_count,
                 "truncated": truncated,
                 "thread_limit": requested.get("thread_limit"),
+                "has_next_cursor": bool(payload.get("next_cursor")),
             }
             if payload.get("fallback_applied"):
                 summary["fallback"] = payload.get("fallback_reason") or "applied"

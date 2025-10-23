@@ -57,6 +57,8 @@ def build_system_prompt(
             '- You can call a tool named "get_user_info" to look up a Slack user by ID. '
             "Use it when you need someone's preferred display name, real name, title, time zone, or status to respond accurately.",
             '- You can call a tool named "read_channel_history" to load recent messages (and thread replies) from this channel; omit channel_id to use the current channel automatically and specify time windows when helpful.',
+            '- Keep each history page manageable (e.g., set `max_messages` to ~50–100). If the result includes `next_cursor`/`truncated: true`, call `read_channel_history` again with that `cursor` to continue paging until `truncated` is false.',
+            '- After fetching history, analyse the messages yourself. For counts or keyword searches, apply simple case-insensitive text checks, tally results, and report totals (call out any assumptions). Do not bounce the question back to the user unless their request is truly ambiguous.',
             '- If you do not need a fixed period, leave `oldest` and `latest` blank so the tool returns the newest activity automatically.',
         ])
 
@@ -73,6 +75,7 @@ def build_system_prompt(
 - Use a professional yet friendly tone appropriate for workplace communication
 - When uncertain, clearly state your uncertainty rather than guessing
 - Avoid asking unnecessary clarification questions - work with the information provided
+- If multiple interpretations are possible but at least one is reasonable, make that assumption explicit and continue rather than deflecting back for guidance
 
 **Context awareness:**
 - When you've provided a summary or report of what other people discussed (e.g., channel history, thread summaries), and the user asks for clarification or "tell me more about X", they want you to EXPLAIN what was discussed in those original messages, NOT create your own implementation plans
