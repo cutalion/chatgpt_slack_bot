@@ -62,3 +62,14 @@ SLACK_TOOL_HISTORY_TEXT_CHAR_CAP = _to_int(os.getenv("SLACK_TOOL_HISTORY_TEXT_CH
 REASONING_EFFORT = os.getenv("REASONING_EFFORT", "low")  # one of: low, medium, high
 
 """No ad-hoc debug flags here; keep runtime surface minimal."""
+
+# Pricing per 1M tokens for supported GPT-5 models (input | cached input | output).
+# Cached input is the discounted rate applied when tokens are served from cache.
+OPENAI_PRICING_PER_M_TOKEN = {
+    "gpt-5": {"input": 1.25, "cached_input": 0.125, "output": 10.00},
+    "gpt-5-mini": {"input": 0.25, "cached_input": 0.025, "output": 2.00},
+    "gpt-5-nano": {"input": 0.05, "cached_input": 0.005, "output": 0.40},
+    "gpt-5-chat-latest": {"input": 1.25, "cached_input": 0.125, "output": 10.00},
+    "gpt-5-codex": {"input": 1.25, "cached_input": 0.125, "output": 10.00},
+    "gpt-5-pro": {"input": 15.00, "output": 120.00},
+}

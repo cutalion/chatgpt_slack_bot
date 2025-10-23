@@ -11,10 +11,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Iterable, Set
 
 import config
-from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
+from openai import AsyncOpenAI, APITimeoutError, RateLimitError
 from slack_tools import SlackToolRunner
 
 
@@ -106,6 +106,7 @@ class OpenAIDirectAgent:
                     timeout=timeout_seconds
                 )
 
+                self._log_usage_metrics(resp, context=f"attempt-{attempt + 1}")
                 logger.debug('OpenAI response object: %s', type(resp))
                 tools_handled = False
                 pending_unhandled: List[str] = []
@@ -152,6 +153,7 @@ class OpenAIDirectAgent:
                     if instructions:
                         retry_args["instructions"] = instructions + "\n\nTools are unavailable; answer directly without calling tools."
                     resp2 = await self.aclient.responses.create(**retry_args)
+                    self._log_usage_metrics(resp2, context="tool-fallback")
                     text2 = self._extract_output_text(resp2)
                     if text2 and text2.strip():
                         return text2.strip()
@@ -346,6 +348,245 @@ class OpenAIDirectAgent:
                         calls.append(normalised)
         return calls
 
+    def _log_usage_metrics(self, resp: Any, *, context: str) -> None:
+        """Log token usage and estimated cost for a given Responses API call."""
+
+        if resp is None:
+            return
+
+        usage = self._get(resp, "usage")
+        if not usage:
+            logger.debug("No usage metrics available for context=%s", context)
+            return
+
+        metrics = self._extract_usage_counts(usage)
+        if not metrics:
+            logger.debug("Usage payload missing token counts for context=%s", context)
+            return
+
+        raw_model = self._get(resp, "model") or self.model or ""
+        model_name = str(raw_model).strip()
+        cost, cached_input_tokens = self._estimate_cost(model_name, metrics)
+
+        log_parts = [
+            f"context={context}",
+            f"model={model_name or 'unknown'}",
+            f"input_tokens={metrics.get('input_tokens', 0)}",
+            f"output_tokens={metrics.get('output_tokens', 0)}",
+            f"total_tokens={metrics.get('total_tokens', 0)}",
+        ]
+
+        reasoning_tokens = metrics.get("reasoning_tokens")
+        if reasoning_tokens:
+            log_parts.append(f"reasoning_tokens={reasoning_tokens}")
+
+        cache_creation = metrics.get("cache_creation_input_tokens")
+        if cache_creation:
+            log_parts.append(f"cache_creation_input_tokens={cache_creation}")
+
+        cache_read = metrics.get("cache_read_input_tokens")
+        if cache_read:
+            log_parts.append(f"cache_read_input_tokens={cache_read}")
+
+        if cached_input_tokens:
+            log_parts.append(f"effective_cached_input_tokens={cached_input_tokens}")
+
+        if cost is not None:
+            log_parts.append(f"cost_usd={cost:.6f}")
+        else:
+            log_parts.append("cost_usd=unavailable")
+
+        logger.info("OpenAI usage %s", " ".join(log_parts))
+
+    def _extract_usage_counts(self, usage: Any) -> Dict[str, int]:
+        """Normalise usage payload into a dictionary of token counts."""
+
+        metrics: Dict[str, int] = {}
+
+        input_tokens = self._coerce_int(self._get(usage, "input_tokens"))
+        if input_tokens is None:
+            input_tokens = self._coerce_int(self._get(usage, "prompt_tokens"))
+        if input_tokens is None:
+            input_tokens = self._sum_usage_tokens(usage, prefix="input_", exclude={"input_tokens"})
+        output_tokens = self._coerce_int(self._get(usage, "output_tokens"))
+        if output_tokens is None:
+            output_tokens = self._coerce_int(self._get(usage, "completion_tokens"))
+        if output_tokens is None:
+            output_tokens = self._sum_usage_tokens(usage, prefix="output_", exclude={"output_tokens"})
+        total_tokens = self._coerce_int(self._get(usage, "total_tokens"))
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = input_tokens + output_tokens
+
+        if input_tokens is not None:
+            metrics["input_tokens"] = input_tokens
+        if output_tokens is not None:
+            metrics["output_tokens"] = output_tokens
+        if total_tokens is not None:
+            metrics["total_tokens"] = total_tokens
+
+        reasoning_tokens = self._coerce_int(self._get(usage, "reasoning_tokens"))
+        if reasoning_tokens is None:
+            reasoning_tokens = self._sum_usage_tokens(usage, prefix="reasoning_", exclude={"reasoning_tokens"})
+        if reasoning_tokens:
+            metrics["reasoning_tokens"] = reasoning_tokens
+
+        cache_creation = self._coerce_int(self._get(usage, "cache_creation_input_tokens"))
+        if cache_creation:
+            metrics["cache_creation_input_tokens"] = cache_creation
+
+        cache_read = self._coerce_int(self._get(usage, "cache_read_input_tokens"))
+        if cache_read:
+            metrics["cache_read_input_tokens"] = cache_read
+
+        return metrics
+
+    def _sum_usage_tokens(
+        self,
+        usage: Any,
+        *,
+        prefix: str,
+        exclude: Optional[Set[str]] = None,
+    ) -> Optional[int]:
+        """Sum token counts matching the given prefix when explicit totals are absent."""
+
+        total = 0
+        found = False
+        for key, value in self._iter_usage_items(usage):
+            if exclude and key in exclude:
+                continue
+            if not key.startswith(prefix):
+                continue
+            if not key.endswith("_tokens"):
+                continue
+            coerced = self._coerce_int(value)
+            if coerced is None:
+                continue
+            total += coerced
+            found = True
+        return total if found else None
+
+    def _iter_usage_items(self, usage: Any) -> Iterable[Tuple[str, Any]]:
+        """Yield key/value pairs from an OpenAI usage payload regardless of type."""
+
+        if usage is None:
+            return []
+
+        if isinstance(usage, dict):
+            return list(usage.items())
+
+        if hasattr(usage, "model_dump"):
+            try:
+                dumped = usage.model_dump()
+                if isinstance(dumped, dict):
+                    return list(dumped.items())
+            except Exception:
+                pass
+
+        if hasattr(usage, "to_dict"):
+            try:
+                dumped = usage.to_dict()
+                if isinstance(dumped, dict):
+                    return list(dumped.items())
+            except Exception:
+                pass
+
+        items: List[Tuple[str, Any]] = []
+        for attr in dir(usage):
+            if attr.startswith("_"):
+                continue
+            try:
+                value = getattr(usage, attr)
+            except Exception:
+                continue
+            if callable(value):
+                continue
+            items.append((attr, value))
+        return items
+
+    def _coerce_int(self, value: Any) -> Optional[int]:
+        """Convert a usage value to int when possible."""
+
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                return int(float(text))
+            except ValueError:
+                return None
+        return None
+
+    def _estimate_cost(self, model: Optional[str], metrics: Dict[str, int]) -> Tuple[Optional[float], Optional[int]]:
+        """Estimate USD cost for token usage when pricing data is known.
+
+        Returns:
+            (total_cost, cached_token_count) where cached_token_count represents
+            the number of input tokens charged at the cached-input rate.
+        """
+
+        pricing = self._lookup_pricing(model)
+        if not pricing:
+            return None, None
+
+        input_price = pricing.get("input")
+        cached_input_price = pricing.get("cached_input")
+        output_price = pricing.get("output")
+
+        input_tokens = metrics.get("input_tokens")
+        output_tokens = metrics.get("output_tokens")
+        cache_read_tokens = metrics.get("cache_read_input_tokens") or 0
+        cache_creation_tokens = metrics.get("cache_creation_input_tokens")
+
+        cached_tokens = cache_read_tokens if cache_read_tokens > 0 else None
+
+        # Determine the quantity of tokens billed at the standard input rate.
+        non_cached_input_tokens: Optional[int]
+        if input_tokens is not None:
+            non_cached_input_tokens = input_tokens - cache_read_tokens
+        elif cache_creation_tokens is not None:
+            non_cached_input_tokens = cache_creation_tokens
+        else:
+            non_cached_input_tokens = None
+
+        if non_cached_input_tokens is not None and non_cached_input_tokens < 0:
+            non_cached_input_tokens = 0
+
+        cost = 0.0
+
+        if non_cached_input_tokens and input_price:
+            cost += (non_cached_input_tokens / 1_000_000.0) * input_price
+
+        if cache_read_tokens and cached_input_price:
+            cost += (cache_read_tokens / 1_000_000.0) * cached_input_price
+
+        if output_tokens and output_price:
+            cost += (output_tokens / 1_000_000.0) * output_price
+
+        total_cost = cost if cost > 0.0 else None
+        return total_cost, cached_tokens
+
+    def _lookup_pricing(self, model: Optional[str]) -> Optional[Dict[str, float]]:
+        """Return pricing data for the provided model name when available."""
+
+        pricing_table = getattr(config, "OPENAI_PRICING_PER_M_TOKEN", None)
+        if not pricing_table:
+            return None
+
+        if not model:
+            return None
+
+        normalized = str(model).lower()
+        for key, value in pricing_table.items():
+            if normalized == key or normalized.startswith(f"{key}-"):
+                return value
+        return None
+
     async def _run_slack_tools(
         self,
         resp: Any,
@@ -414,7 +655,9 @@ class OpenAIDirectAgent:
                 request_kwargs["instructions"] = instructions
             if tool_definitions:
                 request_kwargs["tools"] = tool_definitions
+            call_number = runner.max_calls - remaining + 1
             current = await self.aclient.responses.create(**request_kwargs)
+            self._log_usage_metrics(current, context=f"tool-followup-{call_number}")
             handled_any = True
             remaining -= 1
         return current, handled_any, pending_unhandled
