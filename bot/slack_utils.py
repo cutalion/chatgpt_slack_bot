@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import config
 from slack_sdk.web.async_client import AsyncWebClient
@@ -21,6 +22,13 @@ _BOT_USER_ID: Optional[str] = None
 _USER_INFO_CACHE: Dict[str, Dict[str, Any]] = {}
 
 _USER_ID_MENTION_PATTERN = re.compile(r"(?<!<)@(U|W|T)[A-Z0-9]{8,}\b")
+
+# Channel access control caches with TTL (value, expiry_timestamp)
+_CHANNEL_TYPE_CACHE: Dict[str, Tuple[bool, float]] = {}  # channel_id -> (is_private, expiry)
+_USER_PRIVATE_CHANNELS_CACHE: Dict[str, Tuple[Set[str], float]] = {}  # user_id -> (channel_ids, expiry)
+
+# Cache TTL in seconds (30 minutes)
+_CHANNEL_ACCESS_CACHE_TTL = 30 * 60
 
 
 def _normalise_ts(value: Any) -> Optional[str]:
@@ -178,6 +186,147 @@ async def get_bot_user_id() -> Optional[str]:
     except Exception as exc:
         logger.debug("Failed to resolve bot user id: %s", exc)
     return None
+
+
+async def is_private_channel(channel_id: str) -> bool:
+    """Check if a channel is private using conversations.info.
+    
+    Returns True for private channels (groups), False for public channels, DMs, etc.
+    Results are cached for 30 minutes.
+    """
+    if not channel_id or not isinstance(channel_id, str):
+        return False
+    
+    # Check cache
+    cached = _CHANNEL_TYPE_CACHE.get(channel_id)
+    if cached is not None:
+        is_private, expiry = cached
+        if time.time() < expiry:
+            return is_private
+    
+    try:
+        info = await slack_client.conversations_info(channel=channel_id)
+        data = getattr(info, "data", None)
+        if isinstance(info, dict) and not data:
+            data = info
+        if not isinstance(data, dict):
+            return False
+        
+        channel_info = data.get("channel") or {}
+        is_private = bool(channel_info.get("is_private"))
+        
+        # Cache the result
+        _CHANNEL_TYPE_CACHE[channel_id] = (is_private, time.time() + _CHANNEL_ACCESS_CACHE_TTL)
+        return is_private
+    except Exception as exc:
+        logger.debug("Failed to check if channel %s is private: %s", channel_id, exc)
+        # Fail-safe: assume private to avoid accidental exposure
+        return True
+
+
+async def get_user_private_channels(
+    user_id: str,
+    *,
+    bypass_cache: bool = False,
+) -> Set[str]:
+    """Fetch all private channel IDs the user belongs to.
+    
+    Uses users.conversations API which returns all channels the user and bot share.
+    Results are cached for 30 minutes unless bypass_cache=True.
+    """
+    if not user_id or not isinstance(user_id, str):
+        return set()
+    
+    # Check cache unless bypassing
+    if not bypass_cache:
+        cached = _USER_PRIVATE_CHANNELS_CACHE.get(user_id)
+        if cached is not None:
+            channels, expiry = cached
+            if time.time() < expiry:
+                return channels
+    
+    private_channels: Set[str] = set()
+    cursor: Optional[str] = None
+    
+    try:
+        while True:
+            kwargs: Dict[str, Any] = {
+                "user": user_id,
+                "types": "private_channel",
+                "limit": 200,
+                "exclude_archived": True,
+            }
+            if cursor:
+                kwargs["cursor"] = cursor
+            
+            resp = await slack_client.users_conversations(**kwargs)
+            data = getattr(resp, "data", None)
+            if isinstance(resp, dict) and not data:
+                data = resp
+            if not isinstance(data, dict):
+                break
+            
+            channels_list = data.get("channels") or []
+            for channel in channels_list:
+                if isinstance(channel, dict):
+                    channel_id = channel.get("id")
+                    if isinstance(channel_id, str):
+                        private_channels.add(channel_id)
+            
+            # Handle pagination
+            response_meta = data.get("response_metadata") or {}
+            next_cursor = response_meta.get("next_cursor")
+            if not next_cursor:
+                break
+            cursor = next_cursor
+        
+        # Cache the result
+        _USER_PRIVATE_CHANNELS_CACHE[user_id] = (
+            private_channels,
+            time.time() + _CHANNEL_ACCESS_CACHE_TTL,
+        )
+        logger.debug(
+            "Fetched %d private channels for user %s", len(private_channels), user_id
+        )
+        return private_channels
+        
+    except Exception as exc:
+        logger.debug("Failed to fetch private channels for user %s: %s", user_id, exc)
+        return set()
+
+
+async def is_user_member_of_channel(
+    channel_id: str,
+    user_id: str,
+    *,
+    bypass_cache: bool = False,
+) -> bool:
+    """Check if a user is a member of a private channel.
+    
+    Only checks membership for private channels. Public channels always return True.
+    """
+    if not channel_id or not user_id:
+        return False
+    
+    # First check if channel is private
+    is_private = await is_private_channel(channel_id)
+    if not is_private:
+        # Public channels don't need membership validation
+        return True
+    
+    # Get user's private channels and check membership
+    user_channels = await get_user_private_channels(user_id, bypass_cache=bypass_cache)
+    return channel_id in user_channels
+
+
+def invalidate_user_channel_cache(user_id: str) -> None:
+    """Invalidate the cached private channels for a user.
+    
+    Called when user claims they were just added to a channel.
+    """
+    if user_id in _USER_PRIVATE_CHANNELS_CACHE:
+        del _USER_PRIVATE_CHANNELS_CACHE[user_id]
+        logger.debug("Invalidated channel cache for user %s", user_id)
 
 
 def _trim_text(value: Optional[str], *, limit: int) -> str:

@@ -8,7 +8,13 @@ from copy import deepcopy
 from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional
 
-from slack_utils import fetch_channel_history, get_user_profile
+from slack_utils import (
+    fetch_channel_history,
+    get_user_profile,
+    is_private_channel,
+    is_user_member_of_channel,
+    invalidate_user_channel_cache,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +85,28 @@ _READ_CHANNEL_HISTORY_DEFINITION = {
 }
 
 
+_REFRESH_CHANNEL_ACCESS_DEFINITION = {
+    "type": "function",
+    "name": "refresh_channel_access",
+    "description": (
+        "Re-check if the current user has access to a private channel. "
+        "Use this when the user claims they were just added to a channel "
+        "and a previous access check failed."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "channel_id": {
+                "type": "string",
+                "description": "Slack channel ID to re-check access for (e.g. C12345678).",
+            }
+        },
+        "required": ["channel_id"],
+        "additionalProperties": False,
+    },
+}
+
+
 class SlackToolRunner:
     """Execute Slack-specific tool calls issued by the language model."""
 
@@ -88,13 +116,16 @@ class SlackToolRunner:
         *,
         default_channel_id: Optional[str] = None,
         channel_descriptor: Optional[str] = None,
+        requesting_user_id: Optional[str] = None,
     ) -> None:
         self.max_calls = max(1, int(max_calls or 1))
         self.default_channel_id = default_channel_id
         self.channel_descriptor = channel_descriptor
+        self.requesting_user_id = requesting_user_id
         self._handlers = {
             "get_user_info": self._handle_get_user_info,
             "read_channel_history": self._handle_read_channel_history,
+            "refresh_channel_access": self._handle_refresh_channel_access,
         }
 
     @property
@@ -102,6 +133,7 @@ class SlackToolRunner:
         definitions = [
             deepcopy(_GET_USER_INFO_DEFINITION),
             deepcopy(_READ_CHANNEL_HISTORY_DEFINITION),
+            deepcopy(_REFRESH_CHANNEL_ACCESS_DEFINITION),
         ]
         if self.channel_descriptor:
             for definition in definitions:
@@ -165,6 +197,12 @@ class SlackToolRunner:
             channel_id = channel_id.strip()
         if not channel_id:
             return {"error": "channel_id is required"}
+        
+        # Access control for private channels
+        access_error = await self._validate_channel_access(channel_id)
+        if access_error:
+            return access_error
+        
         oldest = arguments.get("oldest")
         latest = arguments.get("latest")
         max_messages = arguments.get("max_messages")
@@ -223,6 +261,89 @@ class SlackToolRunner:
                 return fallback_result
 
         return result
+
+    async def _validate_channel_access(self, channel_id: str) -> Optional[Dict[str, Any]]:
+        """Validate that the requesting user has access to the channel.
+        
+        Returns None if access is allowed, or an error dict if access is denied.
+        """
+        if not self.requesting_user_id:
+            # If we don't know who's asking, we can't validate - fail open for backwards compat
+            logger.debug("No requesting_user_id set, skipping access validation for %s", channel_id)
+            return None
+        
+        try:
+            is_private = await is_private_channel(channel_id)
+            if not is_private:
+                # Public channels don't require membership validation
+                return None
+            
+            has_access = await is_user_member_of_channel(
+                channel_id, self.requesting_user_id
+            )
+            if has_access:
+                return None
+            
+            logger.info(
+                "Access denied: user %s is not a member of private channel %s",
+                self.requesting_user_id,
+                channel_id,
+            )
+            return {
+                "error": "access_denied",
+                "message": (
+                    "You don't have access to this private channel. "
+                    "If you were just added, say so and I'll refresh my cache."
+                ),
+                "channel_id": channel_id,
+            }
+        except Exception as exc:
+            logger.warning("Error validating channel access for %s: %s", channel_id, exc)
+            # Fail-safe: deny access on error to avoid accidental exposure
+            return {
+                "error": "access_check_failed",
+                "message": "Could not verify your access to this channel.",
+                "channel_id": channel_id,
+            }
+
+    async def _handle_refresh_channel_access(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Re-check access to a private channel after cache invalidation."""
+        channel_id = arguments.get("channel_id")
+        if not isinstance(channel_id, str) or not channel_id.strip():
+            return {"error": "channel_id is required"}
+        channel_id = channel_id.strip()
+        
+        if not self.requesting_user_id:
+            return {
+                "error": "no_user_context",
+                "message": "Cannot refresh access without user context.",
+            }
+        
+        # Invalidate the cache for this user
+        invalidate_user_channel_cache(self.requesting_user_id)
+        
+        # Re-check access with fresh data
+        has_access = await is_user_member_of_channel(
+            channel_id, self.requesting_user_id, bypass_cache=True
+        )
+        
+        logger.info(
+            "Refreshed channel access for user %s to channel %s: access=%s",
+            self.requesting_user_id,
+            channel_id,
+            has_access,
+        )
+        
+        return {
+            "channel_id": channel_id,
+            "access": has_access,
+            "refreshed": True,
+            "message": (
+                "Access granted! You can now read this channel."
+                if has_access
+                else "Still no access. Please verify you've been added to the channel."
+            ),
+        }
 
     @staticmethod
     def _build_log_summary(

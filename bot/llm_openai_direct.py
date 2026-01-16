@@ -87,6 +87,7 @@ class OpenAIDirectAgent:
                 max_calls=config.SLACK_TOOL_MAX_CALLS,
                 default_channel_id=context.get("channel_id"),
                 channel_descriptor=context.get("channel_descriptor"),
+                requesting_user_id=context.get("requesting_user_id"),
             )
             tool_definitions.extend(runner.tool_definitions)
         if tool_definitions:

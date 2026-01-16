@@ -154,6 +154,7 @@ async def handle_mention(body: SlackEventBody, logger: logging.Logger) -> None:
         "channel_type": channel_type,
         "channel_descriptor": channel_descriptor,
         "root_thread_ts": root_ts,
+        "requesting_user_id": user,
     }
 
     ai_reply = await llm.generate_ai_reply(messages, slack_context=slack_context)

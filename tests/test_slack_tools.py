@@ -501,3 +501,178 @@ def test_serialise_payload_with_non_serializable():
     
     result = SlackToolRunner._serialise_payload(NonSerializable())
     assert result == '{"error": "non_serialisable_payload"}'
+
+
+# ============================================================================
+# Private Channel Access Control Tests
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_private_channel_access_denied_for_non_member(monkeypatch):
+    """Test that non-members cannot access private channel history."""
+    async def fake_is_private_channel(channel_id):
+        return channel_id == "C_PRIVATE"
+    
+    async def fake_is_user_member(channel_id, user_id, *, bypass_cache=False):
+        # User U123 is NOT a member of C_PRIVATE
+        return False
+    
+    monkeypatch.setattr("slack_tools.is_private_channel", fake_is_private_channel)
+    monkeypatch.setattr("slack_tools.is_user_member_of_channel", fake_is_user_member)
+    
+    runner = SlackToolRunner(max_calls=1, requesting_user_id="U123")
+    call = {
+        "id": "call_access_denied",
+        "name": "read_channel_history",
+        "arguments": {"channel_id": "C_PRIVATE"},
+    }
+    
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+    
+    assert payload["error"] == "access_denied"
+    assert "don't have access" in payload["message"]
+    assert payload["channel_id"] == "C_PRIVATE"
+
+
+@pytest.mark.asyncio
+async def test_private_channel_access_allowed_for_member(monkeypatch):
+    """Test that members can access private channel history."""
+    async def fake_is_private_channel(channel_id):
+        return channel_id == "C_PRIVATE"
+    
+    async def fake_is_user_member(channel_id, user_id, *, bypass_cache=False):
+        # User U123 IS a member of C_PRIVATE
+        return True
+    
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        return {"channel_id": channel_id, "messages": [{"ts": "1", "text": "hello"}]}
+    
+    monkeypatch.setattr("slack_tools.is_private_channel", fake_is_private_channel)
+    monkeypatch.setattr("slack_tools.is_user_member_of_channel", fake_is_user_member)
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+    
+    runner = SlackToolRunner(max_calls=1, requesting_user_id="U123")
+    call = {
+        "id": "call_access_allowed",
+        "name": "read_channel_history",
+        "arguments": {"channel_id": "C_PRIVATE"},
+    }
+    
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+    
+    assert "error" not in payload
+    assert payload["channel_id"] == "C_PRIVATE"
+    assert len(payload["messages"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_public_channel_always_allowed(monkeypatch):
+    """Test that public channels bypass membership check."""
+    async def fake_is_private_channel(channel_id):
+        return False  # Public channel
+    
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        return {"channel_id": channel_id, "messages": []}
+    
+    monkeypatch.setattr("slack_tools.is_private_channel", fake_is_private_channel)
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+    
+    # Even without membership check mocked, this should work
+    runner = SlackToolRunner(max_calls=1, requesting_user_id="U123")
+    call = {
+        "id": "call_public",
+        "name": "read_channel_history",
+        "arguments": {"channel_id": "C_PUBLIC"},
+    }
+    
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+    
+    assert "error" not in payload
+    assert payload["channel_id"] == "C_PUBLIC"
+
+
+@pytest.mark.asyncio
+async def test_access_check_without_requesting_user(monkeypatch):
+    """Test that access check is skipped when no requesting_user_id is set."""
+    async def fake_fetch_channel_history(channel_id, **kwargs):
+        return {"channel_id": channel_id, "messages": []}
+    
+    monkeypatch.setattr("slack_tools.fetch_channel_history", fake_fetch_channel_history)
+    
+    # No requesting_user_id set - should skip access control
+    runner = SlackToolRunner(max_calls=1)  # No requesting_user_id
+    call = {
+        "id": "call_no_user",
+        "name": "read_channel_history",
+        "arguments": {"channel_id": "C_ANY"},
+    }
+    
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+    
+    assert "error" not in payload
+    assert payload["channel_id"] == "C_ANY"
+
+
+@pytest.mark.asyncio
+async def test_refresh_channel_access_invalidates_cache(monkeypatch):
+    """Test that refresh_channel_access invalidates cache and re-checks."""
+    invalidate_calls = []
+    
+    def fake_invalidate_cache(user_id):
+        invalidate_calls.append(user_id)
+    
+    async def fake_is_user_member(channel_id, user_id, *, bypass_cache=False):
+        # Return True after cache is bypassed
+        return bypass_cache
+    
+    monkeypatch.setattr("slack_tools.invalidate_user_channel_cache", fake_invalidate_cache)
+    monkeypatch.setattr("slack_tools.is_user_member_of_channel", fake_is_user_member)
+    
+    runner = SlackToolRunner(max_calls=1, requesting_user_id="U123")
+    call = {
+        "id": "call_refresh",
+        "name": "refresh_channel_access",
+        "arguments": {"channel_id": "C_PRIVATE"},
+    }
+    
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+    
+    assert payload["refreshed"] is True
+    assert payload["access"] is True  # bypass_cache=True returns True in our mock
+    assert payload["channel_id"] == "C_PRIVATE"
+    assert "U123" in invalidate_calls
+
+
+@pytest.mark.asyncio
+async def test_refresh_channel_access_without_user_context():
+    """Test that refresh_channel_access fails gracefully without user context."""
+    runner = SlackToolRunner(max_calls=1)  # No requesting_user_id
+    call = {
+        "id": "call_refresh_no_user",
+        "name": "refresh_channel_access",
+        "arguments": {"channel_id": "C_PRIVATE"},
+    }
+    
+    outputs = await runner.execute([call])
+    payload = json.loads(outputs[0]["output"])
+    
+    assert payload["error"] == "no_user_context"
+
+
+def test_tool_definitions_includes_refresh_channel_access():
+    """Test that tool_definitions includes the refresh_channel_access tool."""
+    runner = SlackToolRunner()
+    definitions = runner.tool_definitions
+    names = {definition["name"] for definition in definitions}
+    
+    assert "refresh_channel_access" in names
+    
+    refresh_def = next(d for d in definitions if d["name"] == "refresh_channel_access")
+    assert "channel_id" in refresh_def["parameters"]["properties"]
+    assert refresh_def["parameters"]["required"] == ["channel_id"]
+
